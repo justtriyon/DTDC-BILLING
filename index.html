@@ -2032,6 +2032,8 @@ function mergeCloudData(localData, remoteData) {
   const bookingAwbs = new Set(base.bookings.map(b => String(b.awb || '').toUpperCase()).filter(Boolean));
   const bookingMapById = new Map(base.bookings.map((b,i) => [b.id, i]));
   other.bookings.forEach(b => {
+    const bid = String(b.id || '');
+    if (base.removedTestBulkAt && (bid.includes('-bulk-') || bid.startsWith('admin-test-'))) return;
     const awbKey = String(b.awb || '').toUpperCase();
     if ((b.id && bookingIds.has(b.id)) || (awbKey && bookingAwbs.has(awbKey))) {
       if (b.id && bookingMapById.has(b.id)) {
@@ -3159,7 +3161,11 @@ function removeOwnerTestBookings() {
   if (!confirm('Remove all test/bulk bookings? Normal user entries will remain.')) return;
   const before = data.bookings.length;
   data.bookings = data.bookings.filter(b => !(String(b.id||'').includes('-bulk-') || String(b.id||'').startsWith('admin-test-')));
-  save(); renderOwnerDashboard(); toast('Removed '+(before-data.bookings.length)+' test bookings');
+  data.removedTestBulkAt = Date.now();
+  data.seedVersion = STARTER_DATA_VERSION;
+  save();
+  setTimeout(() => cloudPush(), 200);
+  renderOwnerDashboard(); toast('Removed '+(before-data.bookings.length)+' test bookings');
 }
 
 function resetBillNumberOwner() {
@@ -3433,5 +3439,5 @@ window.addEventListener('storage', e => {
 </script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a04f48590e76a7a6',t:'MTc4MDMyODA2OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a05e2c7def07ffab',t:'MTc4MDQ4NDIxMw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
