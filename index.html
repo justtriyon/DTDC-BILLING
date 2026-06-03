@@ -2003,6 +2003,67 @@ function setStatus(text, cls) {
   el.innerHTML = '<span class="dot"></span><span>' + text + '</span>';
 }
 
+function mergeCloudData(localData, remoteData) {
+  const localUpdated = localData.updatedAt || 0;
+  const remoteUpdated = remoteData.updatedAt || 0;
+  const base = remoteUpdated > localUpdated ? JSON.parse(JSON.stringify(remoteData)) : JSON.parse(JSON.stringify(localData));
+  const other = remoteUpdated > localUpdated ? localData : remoteData;
+  let changed = remoteUpdated > localUpdated;
+
+  base.companies = base.companies || [];
+  base.bookings = base.bookings || [];
+  base.bills = base.bills || [];
+  other.companies = other.companies || [];
+  other.bookings = other.bookings || [];
+  other.bills = other.bills || [];
+
+  const companyCodes = new Set(base.companies.map(c => c.code));
+  const companyNames = new Set(base.companies.map(c => String(c.name || '').toUpperCase()));
+  other.companies.forEach(c => {
+    const nm = String(c.name || '').toUpperCase();
+    if (!companyCodes.has(c.code) && !companyNames.has(nm)) {
+      base.companies.push(c);
+      companyCodes.add(c.code); companyNames.add(nm);
+      changed = true;
+    }
+  });
+
+  const bookingIds = new Set(base.bookings.map(b => b.id).filter(Boolean));
+  const bookingAwbs = new Set(base.bookings.map(b => String(b.awb || '').toUpperCase()).filter(Boolean));
+  const bookingMapById = new Map(base.bookings.map((b,i) => [b.id, i]));
+  other.bookings.forEach(b => {
+    const awbKey = String(b.awb || '').toUpperCase();
+    if ((b.id && bookingIds.has(b.id)) || (awbKey && bookingAwbs.has(awbKey))) {
+      if (b.id && bookingMapById.has(b.id)) {
+        const idx = bookingMapById.get(b.id);
+        const cur = base.bookings[idx];
+        if ((!cur.billNo && b.billNo) || (remoteUpdated > localUpdated && JSON.stringify(cur) !== JSON.stringify(b))) {
+          base.bookings[idx] = { ...cur, ...b };
+          changed = true;
+        }
+      }
+      return;
+    }
+    base.bookings.push(b);
+    if (b.id) bookingIds.add(b.id);
+    if (awbKey) bookingAwbs.add(awbKey);
+    changed = true;
+  });
+
+  const billNos = new Set(base.bills.map(b => b.billNo));
+  other.bills.forEach(b => {
+    if (!billNos.has(b.billNo)) {
+      base.bills.push(b);
+      billNos.add(b.billNo);
+      changed = true;
+    }
+  });
+
+  base.lastBillNum = Math.max(base.lastBillNum || 0, other.lastBillNum || 0);
+  base.updatedAt = Math.max(localUpdated, remoteUpdated, Date.now());
+  return { data: base, changed };
+}
+
 function initFirebase() {
   const cfgStr = localStorage.getItem(LS_FB_CFG);
   if (!cfgStr) { setStatus('Offline (local only)', 'offline'); return; }
@@ -2018,14 +2079,14 @@ function initFirebase() {
     db.ref('nisargBillingV2').on('value', snap => {
       const remote = snap.val();
       if (!remote) { cloudPush(); return; }
-      if (remote.updatedAt && (!data.updatedAt || remote.updatedAt > data.updatedAt)) {
-        suppressNextCloudWrite = true;
-        data = remote;
+      const merged = mergeCloudData(data, remote);
+      if (merged.changed) {
+        data = merged.data;
         forceStarterDataIntoFile();
         saveLocal();
         renderAll();
-        setTimeout(() => cloudPush(), 800);
-        toast('Updated from cloud + sample data merged');
+        setTimeout(() => cloudPush(), 900);
+        toast('Cloud data merged');
       }
     });
   } catch(e) { setStatus('Cloud error', 'offline'); console.error(e); }
@@ -3371,6 +3432,6 @@ window.addEventListener('storage', e => {
 });
 </script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a04f48590e76a7a6',t:'MTc4MDMyODA2OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a054a37d7f6321dd',t:'MTc4MDM4NDIyOQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a05e2c7def07ffab',t:'MTc4MDQ4NDIxMw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
