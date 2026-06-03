@@ -2030,6 +2030,10 @@ function mergeCloudData(localData, remoteData) {
   base.deletedCompanyCodes = { ...(other.deletedCompanyCodes || {}), ...(base.deletedCompanyCodes || {}) };
   base.deletedBookingIds = { ...(other.deletedBookingIds || {}), ...(base.deletedBookingIds || {}) };
   base.deletedBillNos = { ...(other.deletedBillNos || {}), ...(base.deletedBillNos || {}) };
+  base.revivedCompanyCodes = { ...(other.revivedCompanyCodes || {}), ...(base.revivedCompanyCodes || {}) };
+  Object.keys(base.revivedCompanyCodes || {}).forEach(code => {
+    if ((base.revivedCompanyCodes[code] || 0) >= (base.deletedCompanyCodes[code] || 0)) delete base.deletedCompanyCodes[code];
+  });
 
   const deletedCompanySet = new Set(Object.keys(base.deletedCompanyCodes || {}));
   const deletedBookingSet = new Set(Object.keys(base.deletedBookingIds || {}));
@@ -2262,6 +2266,13 @@ function generateNextCompanyCode(nameOrPrefix) {
       if (n > max) max = n;
     }
   });
+  Object.keys(data.deletedCompanyCodes || {}).forEach(code => {
+    const m = String(code || '').toUpperCase().match(new RegExp('^' + prefix + '(\\d+)$'));
+    if (m) {
+      const n = parseInt(m[1]);
+      if (n > max) max = n;
+    }
+  });
   return prefix + String(max + 1).padStart(3, '0');
 }
 
@@ -2364,6 +2375,10 @@ function saveCompany() {
     gstApply: document.getElementById('cm_gstApply').value,
     gstRate: parseFloat(document.getElementById('cm_gstRate').value) || 0
   };
+  data.deletedCompanyCodes = data.deletedCompanyCodes || {};
+  data.revivedCompanyCodes = data.revivedCompanyCodes || {};
+  delete data.deletedCompanyCodes[code];
+  data.revivedCompanyCodes[code] = Date.now();
   if (original) {
     const idx = data.companies.findIndex(c => c.code === original);
     if (idx >= 0) data.companies[idx] = obj;
@@ -3493,5 +3508,5 @@ window.addEventListener('storage', e => {
 </script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a04f48590e76a7a6',t:'MTc4MDMyODA2OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a060190e1f903bbc',t:'MTc4MDUwNDM4OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a06046b348c8ff6f',t:'MTc4MDUwNjI1OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
