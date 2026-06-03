@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>NISARG ENTERPRISE | Billing Management System</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1141,6 +1142,7 @@
           <button class="btn btn-secondary" onclick="resetBillNumberOwner()">Reset Bill Number</button>
           <button class="btn btn-danger" onclick="clearAllBillsOwner()">Clear All Bills</button>
           <button class="btn btn-danger" onclick="enableMaintenanceMode()">Maintenance ON</button>
+          <button class="btn btn-secondary" onclick="openChangePasswordModal()" style="border-color:var(--navy-600); color:var(--navy-700);">🔑 Change Password</button>
         </div>
       </div>
 
@@ -1155,7 +1157,7 @@
             <button class="btn btn-danger" onclick="removeOwnerTestBookings()">Remove Test Bulk Bookings</button>
           </div>
           <div class="info-bar" style="margin-top:12px;">
-            Owner tools sirf <strong>002 / 002</strong> login par visible hain. MASTER user company delete nahi kar sakta.
+            Owner tools sirf <strong>Owner login</strong> par visible hain. MASTER user company delete nahi kar sakta.
           </div>
         </div>
       </div>
@@ -1366,6 +1368,41 @@
   </div>
 </div>
 
+<!-- ============ MODAL: CHANGE PASSWORD ============ -->
+<div class="modal-bg" id="changePasswordModal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h3>🔑 Change Password</h3>
+      <button class="modal-close" onclick="closeModal('changePasswordModal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px; color:var(--gray-600); margin-bottom:14px;">Password change ke baad naya password turant laagu ho jaata hai.</p>
+      <div class="form-field" style="margin-bottom:12px;">
+        <label>Kaun sa login <span class="req">*</span></label>
+        <select id="cp_role" class="form-control">
+          <option value="">-- Select --</option>
+          <option value="master">MASTER (regular user)</option>
+          <option value="owner">Owner (002)</option>
+        </select>
+      </div>
+      <div class="form-field" style="margin-bottom:12px;">
+        <label>Naya Password <span class="req">*</span></label>
+        <input type="password" id="cp_newPass" class="form-control" placeholder="Min 4 characters" autocomplete="new-password"/>
+      </div>
+      <div class="form-field" style="margin-bottom:12px;">
+        <label>Confirm Password <span class="req">*</span></label>
+        <input type="password" id="cp_confirmPass" class="form-control" placeholder="Re-enter new password" autocomplete="new-password"/>
+      </div>
+      <div id="cpError" style="display:none; padding:10px 12px; border:1px solid #feb2b2; background:var(--danger-bg); color:var(--danger); border-radius:4px; font-size:12px; font-weight:600; margin-bottom:8px;"></div>
+      <div class="info-bar">Password sirf is browser mein save hota hai. Backup file lene ke baad password badlein taaki dono sync rahein.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('changePasswordModal')">Cancel</button>
+      <button class="btn btn-success" onclick="saveChangedPassword()">Save Password</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ MODAL: BACKUP ============ -->
 <div class="modal-bg" id="backupModal">
   <div class="modal" style="max-width:480px;">
@@ -1394,25 +1431,49 @@
 
 <script>
 
-/* ============ LOGIN ============ */
-const APP_LOGIN_USER = 'MASTER';
-const APP_LOGIN_PASS = '222';
-const OWNER_LOGIN_USER = '002';
-const OWNER_LOGIN_PASS = '002';
-const LS_MAINTENANCE = 'nisargMaintenanceMode';
+/* ============ LOGIN — SHA-256 password hashing ============ */
+/*
+  Passwords are NEVER stored in source code in plain text.
+  Default credentials on first run: MASTER / 222  and  002 / 002
+  Owner can change passwords from Owner Tools → Change Password.
+*/
+const LS_CREDENTIALS  = 'nisargCredentials_v1';
+const LS_MAINTENANCE  = 'nisargMaintenanceMode';
 const LS_PRINT_SETTINGS = 'nisargPrintSettings';
-let currentUserRole = 'guest';
+let currentUserRole  = 'guest';
 let currentLoginName = '';
 
-function doLogin() {
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+async function initCredentials() {
+  if (localStorage.getItem(LS_CREDENTIALS)) return;
+  const masterHash = await sha256('222');
+  const ownerHash  = await sha256('002');
+  localStorage.setItem(LS_CREDENTIALS, JSON.stringify({
+    master: { user: 'MASTER', hash: masterHash },
+    owner:  { user: '002',    hash: ownerHash  }
+  }));
+}
+
+function getCredentials() {
+  try { return JSON.parse(localStorage.getItem(LS_CREDENTIALS)) || {}; }
+  catch(e) { return {}; }
+}
+
+async function doLogin() {
   const user = (document.getElementById('loginUser')?.value || '').trim().toUpperCase();
   const pass = (document.getElementById('loginPass')?.value || '').trim();
-  const err = document.getElementById('loginError');
+  const err  = document.getElementById('loginError');
+  const creds = getCredentials();
+  const inputHash = await sha256(pass);
   let ok = false;
-  if (user === APP_LOGIN_USER && pass === APP_LOGIN_PASS) {
-    currentUserRole = 'user'; currentLoginName = 'MASTER'; ok = true;
-  } else if (user === OWNER_LOGIN_USER && pass === OWNER_LOGIN_PASS) {
-    currentUserRole = 'owner'; currentLoginName = '002'; ok = true;
+  if (creds.master && user === creds.master.user && inputHash === creds.master.hash) {
+    currentUserRole = 'user'; currentLoginName = creds.master.user; ok = true;
+  } else if (creds.owner && user === creds.owner.user && inputHash === creds.owner.hash) {
+    currentUserRole = 'owner'; currentLoginName = creds.owner.user; ok = true;
   }
   if (ok) {
     if (err) err.style.display = 'none';
@@ -1429,6 +1490,35 @@ function doLogin() {
   if (err) err.style.display = 'block';
   document.getElementById('loginPass').value = '';
   document.getElementById('loginUser').focus();
+}
+
+/* Change-password helpers (owner only) */
+async function openChangePasswordModal() {
+  if (currentUserRole !== 'owner') return alert('Owner login required');
+  ['cp_role','cp_newPass','cp_confirmPass'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const errEl = document.getElementById('cpError');
+  if (errEl) errEl.style.display = 'none';
+  document.getElementById('changePasswordModal').classList.add('show');
+  setTimeout(() => document.getElementById('cp_role')?.focus(), 50);
+}
+
+async function saveChangedPassword() {
+  if (currentUserRole !== 'owner') return alert('Owner login required');
+  const role    = (document.getElementById('cp_role')?.value || '').trim();
+  const np      = (document.getElementById('cp_newPass')?.value || '').trim();
+  const np2     = (document.getElementById('cp_confirmPass')?.value || '').trim();
+  const errEl   = document.getElementById('cpError');
+  function cpErr(msg) { if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; } }
+  if (!role)        return cpErr('Please select which login to change.');
+  if (np.length < 4)  return cpErr('New password must be at least 4 characters.');
+  if (np !== np2)   return cpErr('Passwords do not match.');
+  const creds = getCredentials();
+  const newHash = await sha256(np);
+  if (role === 'master') creds.master.hash = newHash;
+  else                   creds.owner.hash  = newHash;
+  localStorage.setItem(LS_CREDENTIALS, JSON.stringify(creds));
+  closeModal('changePasswordModal');
+  toast('Password changed successfully');
 }
 
 function handleLoginKey(ev) {
@@ -1472,14 +1562,16 @@ function enableMaintenanceMode() {
   applyMaintenanceGate();
 }
 
-function disableMaintenanceMode() {
+async function disableMaintenanceMode() {
   const user = (document.getElementById('maintenanceUser')?.value || '').trim().toUpperCase();
   const pass = (document.getElementById('maintenancePass')?.value || '').trim();
-  const err = document.getElementById('maintenanceError');
-  if (user === OWNER_LOGIN_USER && pass === OWNER_LOGIN_PASS) {
+  const err  = document.getElementById('maintenanceError');
+  const creds = getCredentials();
+  const inputHash = await sha256(pass);
+  if (creds.owner && user === creds.owner.user && inputHash === creds.owner.hash) {
     localStorage.setItem(LS_MAINTENANCE, 'no');
     currentUserRole = 'owner';
-    currentLoginName = '002';
+    currentLoginName = creds.owner.user;
     setupRoleUI();
     document.body.classList.remove('login-locked');
     document.getElementById('maintenanceScreen').style.display = 'none';
@@ -2148,10 +2240,10 @@ function saveFirebaseConfig() {
   let cfg;
   try { cfg = JSON.parse(raw); }
   catch(e) {
-    try { const cleaned = raw.replace(/^[^{]*/, '').replace(/;[\s\S]*$/, ''); cfg = Function('"use strict"; return (' + cleaned + ')')(); }
-    catch(e2) { alert('Could not parse config'); return; }
+    alert('Invalid JSON. Please paste valid Firebase config in JSON format.\n\nExample:\n{\n  "apiKey": "...",\n  "databaseURL": "https://...firebaseio.com",\n  "projectId": "..."\n}');
+    return;
   }
-  if (!cfg.databaseURL) { alert('Must include databaseURL'); return; }
+  if (!cfg.databaseURL) { alert('Config must include databaseURL'); return; }
   localStorage.setItem(LS_FB_CFG, JSON.stringify(cfg));
   alert('Saved. Reloading…');
   location.reload();
@@ -3182,7 +3274,7 @@ function setupRoleUI() {
 }
 
 function renderOwnerDashboard() {
-  if (currentUserRole !== 'owner') { alert('Owner tools ke liye 002 / 002 login required hai.'); switchPanel('dashboard'); return; }
+  if (currentUserRole !== 'owner') { alert('Owner tools ke liye Owner login required hai.'); switchPanel('dashboard'); return; }
   const totalBookings = (data.bookings || []).length;
   const sizeBytes = new Blob([JSON.stringify(data)]).size;
   document.getElementById('owner-login-mode').textContent = 'OWNER';
@@ -3397,6 +3489,14 @@ function downloadBackup() {
   localStorage.setItem(LS_LAST_BACKUP, Date.now().toString());
   toast('Backup downloaded');
 }
+function validateBackupData(r) {
+  if (typeof r !== 'object' || r === null || Array.isArray(r)) return false;
+  if (r.companies !== undefined && !Array.isArray(r.companies)) return false;
+  if (r.bookings  !== undefined && !Array.isArray(r.bookings))  return false;
+  if (r.bills     !== undefined && !Array.isArray(r.bills))     return false;
+  return true;
+}
+
 function restoreBackup(ev) {
   const file = ev.target.files[0];
   if (!file) return;
@@ -3404,6 +3504,7 @@ function restoreBackup(ev) {
   reader.onload = e => {
     try {
       const r = JSON.parse(e.target.result);
+      if (!validateBackupData(r)) throw new Error('Unrecognized file format. Please use a NISARG ENTERPRISE backup file.');
 
       // 1) Full backup: FULL_BACKUP.json / downloaded backup
       if (r.companies && r.bookings) {
@@ -3490,10 +3591,12 @@ function renderAll() {
 renderAll();
 applyMaintenanceGate();
 
-if (!localStorage.getItem(LS_FB_CFG)) {
-  document.getElementById('setupScreen').style.display = 'block';
-  setStatus('Offline', 'offline');
-} else { initFirebase(); }
+initCredentials().then(() => {
+  if (!localStorage.getItem(LS_FB_CFG)) {
+    document.getElementById('setupScreen').style.display = 'block';
+    setStatus('Offline', 'offline');
+  } else { initFirebase(); }
+});
 
 window.addEventListener('beforeunload', () => { saveLocal(); });
 window.addEventListener('storage', e => {
@@ -3506,7 +3609,5 @@ window.addEventListener('storage', e => {
   }
 });
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a04f48590e76a7a6',t:'MTc4MDMyODA2OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a06046b348c8ff6f',t:'MTc4MDUwNjI1OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
