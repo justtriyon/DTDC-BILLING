@@ -1139,6 +1139,7 @@
           <button class="btn btn-success" onclick="downloadBackup()">Download Full Backup</button>
           <button class="btn btn-primary" onclick="selectOfflineBackupFolder()">Select Offline Backup Folder</button>
           <button class="btn btn-secondary" onclick="writeOfflineBackupFiles(true)">Save Now to Offline Folder</button>
+          <button class="btn btn-primary" onclick="pushLocalDataAsFinalCloud()">Push This Data as Final Cloud</button>
           <button class="btn btn-secondary" onclick="resetBillNumberOwner()">Reset Bill Number</button>
           <button class="btn btn-danger" onclick="clearAllBillsOwner()">Clear All Bills</button>
           <button class="btn btn-danger" onclick="enableMaintenanceMode()">Maintenance ON</button>
@@ -1440,6 +1441,8 @@
 const LS_CREDENTIALS  = 'nisargCredentials_v1';
 const LS_MAINTENANCE  = 'nisargMaintenanceMode';
 const LS_PRINT_SETTINGS = 'nisargPrintSettings';
+const LS_SAFETY_SNAPSHOT = 'nisargSafetySnapshot_v1';
+const LS_ERROR_LOG = 'nisargErrorLog_v1';
 const DEFAULT_MASTER_HASH = '9b871512327c09ce91dd649b3f96a63b7408ef267c8cc5710114e629730cb61f';
 const DEFAULT_OWNER_HASH  = 'a1dd6837f284625bdb1cb68f1dbc85c5dc4d8b05bae24c94ed5f55c477326ea2';
 let currentUserRole  = 'guest';
@@ -1651,6 +1654,9 @@ const LS_LAST_BACKUP = 'nisargLastBackup';
 const CLOUD_PATH = 'nisargBillingV4';
 const STARTER_DATA_VERSION = 'seed_5_companies_5000plus_bookings_v3';
 const APP_DATA_VERSION = 'FINAL_V4';
+const IDB_NAME = 'NisargBillingDB_v1';
+const IDB_STORE = 'appData';
+let billingDBPromise = null;
 
 function createStarterData() {
   const starter = {
@@ -2090,13 +2096,72 @@ let bookingCurrentPage = 1;
 let billingCurrentPage = 1;
 
 function loadLocal() { try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch(e) { return null; } }
-function saveLocal() { data.appVersion = APP_DATA_VERSION; data.updatedAt = Date.now(); localStorage.setItem(LS_KEY, JSON.stringify(data)); }
+function saveLocal() {
+  data.appVersion = APP_DATA_VERSION;
+  data.updatedAt = Date.now();
+  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); }
+  catch(err) { console.warn('localStorage save failed, IndexedDB backup will be used', err); logAppError && logAppError('localStorage_save_failed', err); }
+  saveIndexedDB(data);
+}
 let saveTimer;
 function save() {
   saveLocal();
   scheduleOfflineBackup();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => cloudPush(), 600);
+}
+
+/* ============ INDEXEDDB STORAGE ============ */
+function openBillingDB() {
+  if (billingDBPromise) return billingDBPromise;
+  billingDBPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) return reject(new Error('IndexedDB not supported'));
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const dbi = req.result;
+      if (!dbi.objectStoreNames.contains(IDB_STORE)) dbi.createObjectStore(IDB_STORE, { keyPath: 'key' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return billingDBPromise;
+}
+
+async function saveIndexedDB(payload) {
+  try {
+    const dbi = await openBillingDB();
+    await new Promise((resolve, reject) => {
+      const tx = dbi.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put({ key: LS_KEY, data: payload, updatedAt: payload.updatedAt || Date.now() });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch(err) { console.warn('IndexedDB save failed', err); }
+}
+
+async function loadIndexedDB() {
+  try {
+    const dbi = await openBillingDB();
+    return await new Promise((resolve, reject) => {
+      const tx = dbi.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(LS_KEY);
+      req.onsuccess = () => resolve(req.result ? req.result.data : null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch(err) { console.warn('IndexedDB load failed', err); return null; }
+}
+
+async function initIndexedDBStorage() {
+  const idbData = await loadIndexedDB();
+  if (!idbData) { saveIndexedDB(data); return; }
+  if (idbData.appVersion && typeof APP_DATA_VERSION !== 'undefined' && idbData.appVersion !== APP_DATA_VERSION) return;
+  if ((idbData.updatedAt || 0) > (data.updatedAt || 0)) {
+    data = idbData;
+    forceStarterDataIntoFile();
+    saveLocal();
+    renderAll();
+    toast('Data restored from IndexedDB');
+  }
 }
 
 /* ============ FIREBASE ============ */
@@ -2497,6 +2562,7 @@ function deleteCompany(code) {
   let msg = 'Delete party "'+c.name+'"?';
   if (usedCount > 0) msg += '\n\nWarning: This party has ' + usedCount + ' bookings — they will also be deleted.';
   if (!confirm(msg)) return;
+  createSafetySnapshot('before_company_delete_' + code);
 
   const t0 = performance.now();
   data.companies = data.companies.filter(x => x.code !== code);
@@ -2760,6 +2826,7 @@ function deleteBooking(id) {
   let msg = 'Delete this booking (AWB: '+b.awb+')?';
   if (b.billNo) msg += '\n\nWarning: This booking is part of Bill ' + b.billNo;
   if (!confirm(msg)) return;
+  createSafetySnapshot('before_booking_delete_' + id);
   data.bookings = data.bookings.filter(x => x.id !== id);
   data.deletedBookingIds = data.deletedBookingIds || {};
   data.deletedBookingIds[id] = Date.now();
@@ -3016,6 +3083,7 @@ function reprintBill(billNo) {
 
 function deleteBill(billNo) {
   if (!confirm('Delete bill '+billNo+'? Bookings will become unbilled again.')) return;
+  createSafetySnapshot('before_bill_delete_' + billNo);
   data.bookings.forEach(b => { if (b.billNo === billNo) b.billNo = ''; });
   data.bills = data.bills.filter(b => b.billNo !== billNo);
   data.deletedBillNos = data.deletedBillNos || {};
@@ -3267,6 +3335,125 @@ pagesHtml +
 }
 
 /* ============================================
+   SAFETY SNAPSHOT & DATA HEALTH
+============================================ */
+function logAppError(label, err) {
+  try {
+    const logs = JSON.parse(localStorage.getItem(LS_ERROR_LOG) || '[]');
+    logs.unshift({ at: new Date().toLocaleString(), label, message: (err && err.message) ? err.message : String(err) });
+    localStorage.setItem(LS_ERROR_LOG, JSON.stringify(logs.slice(0, 50)));
+  } catch(e) {}
+}
+
+function createSafetySnapshot(reason) {
+  try {
+    const snap = {
+      at: Date.now(),
+      atText: new Date().toLocaleString(),
+      reason: reason || 'manual',
+      counts: {
+        companies: (data.companies || []).length,
+        bookings: (data.bookings || []).length,
+        bills: (data.bills || []).length
+      },
+      data: JSON.parse(JSON.stringify(data))
+    };
+    localStorage.setItem(LS_SAFETY_SNAPSHOT, JSON.stringify(snap));
+    updateSnapshotStatus();
+    if (reason === 'manual') toast('Safety snapshot created');
+    return true;
+  } catch(err) {
+    logAppError('createSafetySnapshot', err);
+    alert('Snapshot failed: ' + err.message);
+    return false;
+  }
+}
+
+function getSafetySnapshot() {
+  try { return JSON.parse(localStorage.getItem(LS_SAFETY_SNAPSHOT)); }
+  catch(e) { return null; }
+}
+
+function updateSnapshotStatus() {
+  const el = document.getElementById('snapshotStatus');
+  if (!el) return;
+  const snap = getSafetySnapshot();
+  if (!snap) {
+    el.innerHTML = '<strong>Snapshot:</strong> Not available';
+    return;
+  }
+  el.innerHTML = '<strong>Last Snapshot:</strong> ' + escapeHtml(snap.atText || '') +
+    ' &middot; Reason: <strong>' + escapeHtml(snap.reason || '-') + '</strong>' +
+    ' &middot; Companies: ' + (snap.counts?.companies || 0) +
+    ' &middot; Bookings: ' + (snap.counts?.bookings || 0) +
+    ' &middot; Bills: ' + (snap.counts?.bills || 0);
+}
+
+function restoreSafetySnapshot() {
+  if (currentUserRole !== 'owner') return alert('Owner login required');
+  const snap = getSafetySnapshot();
+  if (!snap || !snap.data) return alert('No safety snapshot found');
+  if (!confirm('Restore last safety snapshot from ' + (snap.atText || '') + '? Current data will be replaced.')) return;
+  createSafetySnapshot('before_snapshot_restore');
+  data = snap.data;
+  save(); renderAll(); toast('Safety snapshot restored');
+}
+
+function downloadSafetySnapshot() {
+  const snap = getSafetySnapshot();
+  if (!snap) return alert('No safety snapshot found');
+  const blob = new Blob([JSON.stringify(snap, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'safety-snapshot-' + todayStr() + '-' + (snap.at || Date.now()) + '.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function runDataHealthCheck() {
+  const report = [];
+  const companies = data.companies || [];
+  const bookings = data.bookings || [];
+  const bills = data.bills || [];
+  const companyCodes = new Set(companies.map(c => c.code));
+  const awbMap = new Map();
+  let duplicateAwb = 0;
+  bookings.forEach(b => {
+    const k = String(b.awb || '').toUpperCase().trim();
+    if (!k) return;
+    if (awbMap.has(k)) duplicateAwb++;
+    else awbMap.set(k, b.id);
+  });
+  const missingCompanyBookings = bookings.filter(b => !companyCodes.has(b.companyCode));
+  const bookingIds = new Set(bookings.map(b => b.id));
+  const billsMissingBookings = [];
+  bills.forEach(bill => {
+    const missing = (bill.bookingIds || []).filter(id => !bookingIds.has(id));
+    if (missing.length) billsMissingBookings.push({ billNo: bill.billNo, missing: missing.length });
+  });
+  const billedWithoutBill = bookings.filter(b => b.billNo && !bills.find(x => x.billNo === b.billNo));
+  const dataSize = new Blob([JSON.stringify(data)]).size;
+  const sizeTxt = dataSize > 1024*1024 ? (dataSize/1024/1024).toFixed(2)+' MB' : Math.round(dataSize/1024)+' KB';
+  const statusOk = duplicateAwb === 0 && missingCompanyBookings.length === 0 && billsMissingBookings.length === 0 && billedWithoutBill.length === 0;
+  report.push('<div class="info-bar" style="background:'+(statusOk?'var(--success-bg)':'var(--warning-bg)')+'; border-color:'+(statusOk?'#9ae6b4':'#fbd38d')+'; color:'+(statusOk?'var(--success)':'var(--warning)')+';"><strong>'+(statusOk?'Data Health OK':'Data Health Warning')+'</strong> &middot; Size: '+sizeTxt+'</div>');
+  report.push('<div style="margin-top:10px; display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px;">' +
+    '<div><strong>Companies:</strong> '+companies.length+'</div>' +
+    '<div><strong>Bookings:</strong> '+bookings.length+'</div>' +
+    '<div><strong>Bills:</strong> '+bills.length+'</div>' +
+    '<div><strong>Duplicate AWB:</strong> '+duplicateAwb+'</div>' +
+    '<div><strong>Missing-party bookings:</strong> '+missingCompanyBookings.length+'</div>' +
+    '<div><strong>Bills missing entries:</strong> '+billsMissingBookings.length+'</div>' +
+    '<div><strong>Billed entries without bill:</strong> '+billedWithoutBill.length+'</div>' +
+    '</div>');
+  if (duplicateAwb > 0) report.push('<div style="margin-top:8px; color:var(--warning);"><strong>Note:</strong> Duplicate AWB found. Booking save warning is active for future entries.</div>');
+  if (missingCompanyBookings.length > 0) report.push('<div style="margin-top:8px; color:var(--danger);"><strong>Missing Party Example:</strong> '+escapeHtml((missingCompanyBookings[0].awb||'')+' / '+(missingCompanyBookings[0].companyCode||''))+'</div>');
+  if (billsMissingBookings.length > 0) report.push('<div style="margin-top:8px; color:var(--danger);"><strong>Bill Missing Entries Example:</strong> '+escapeHtml(billsMissingBookings[0].billNo)+' ('+billsMissingBookings[0].missing+')</div>');
+  const el = document.getElementById('healthReport');
+  if (el) el.innerHTML = report.join('');
+  updateSnapshotStatus();
+  toast('Data health check completed');
+}
+
+/* ============================================
    OWNER TOOLS FUNCTIONS
 ============================================ */
 function setupRoleUI() {
@@ -3288,6 +3475,7 @@ function renderOwnerDashboard() {
     if (cur) sel.value = cur;
   }
   loadPrintSettingsUI();
+  updateSnapshotStatus();
 }
 
 function addOwnerTestBookings(count) {
@@ -3316,6 +3504,7 @@ function addOwnerTestBookings(count) {
 function removeOwnerTestBookings() {
   if (currentUserRole !== 'owner') return alert('Owner login required');
   if (!confirm('Remove all test/bulk bookings? Normal user entries will remain.')) return;
+  createSafetySnapshot('before_remove_test_bulk');
   const before = data.bookings.length;
   const removedBulkIds = data.bookings.filter(b => isTestBulkBooking(b)).map(b => b.id);
   data.bookings = data.bookings.filter(b => !isTestBulkBooking(b));
@@ -3339,6 +3528,7 @@ function resetBillNumberOwner() {
 function clearAllBillsOwner() {
   if (currentUserRole !== 'owner') return alert('Owner login required');
   if (!confirm('Clear all generated bills? Bookings will become unbilled.')) return;
+  createSafetySnapshot('before_clear_all_bills');
   data.bookings.forEach(b => b.billNo = '');
   data.bills = [];
   save(); renderOwnerDashboard(); toast('All bills cleared');
@@ -3376,6 +3566,19 @@ function resetPrintSettings() {
   localStorage.removeItem(LS_PRINT_SETTINGS);
   loadPrintSettingsUI();
   toast('Print settings reset');
+}
+
+function pushLocalDataAsFinalCloud() {
+  if (currentUserRole !== 'owner') return alert('Owner login required');
+  if (!db) return alert('Firebase not connected. Please setup Firebase and wait for Synced status.');
+  if (!confirm('Current local data ko FINAL CLOUD DATA banana hai? Cloud data overwrite ho jayega.')) return;
+  createSafetySnapshot('before_push_final_cloud');
+  data.appVersion = (typeof APP_DATA_VERSION !== 'undefined') ? APP_DATA_VERSION : data.appVersion;
+  data.updatedAt = Date.now();
+  setStatus('Pushing final cloud…', 'syncing');
+  db.ref(CLOUD_PATH).set(data)
+    .then(() => { saveLocal(); setStatus('Synced', 'online'); toast('Local data pushed as final cloud'); })
+    .catch(err => { setStatus('Cloud push failed', 'offline'); alert('Cloud push failed: ' + err.message); logAppError('pushLocalDataAsFinalCloud', err); });
 }
 
 /* ============================================
@@ -3509,6 +3712,7 @@ function restoreBackup(ev) {
       // 1) Full backup: FULL_BACKUP.json / downloaded backup
       if (r.companies && r.bookings) {
         if (!confirm('Restore full backup? This replaces current data.')) return;
+        createSafetySnapshot('before_full_restore');
         data = r;
         save(); renderAll(); toast('Full backup restored');
         return;
@@ -3518,6 +3722,7 @@ function restoreBackup(ev) {
       // Format: { company: {...}, bookings: [...] }
       if (r.company && Array.isArray(r.bookings)) {
         if (!confirm('Restore this company with '+r.bookings.length+' bookings? Existing same company data will be replaced.')) return;
+        createSafetySnapshot('before_company_restore');
         restoreCompanyBackup(r.company, r.bookings);
         save(); renderAll(); toast('Company + bookings restored');
         return;
@@ -3589,6 +3794,7 @@ function renderAll() {
 }
 
 renderAll();
+initIndexedDBStorage();
 applyMaintenanceGate();
 
 initCredentials().then(() => {
@@ -3609,5 +3815,6 @@ window.addEventListener('storage', e => {
   }
 });
 </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061a455ba9d47bc',t:'MTc4MDUyMDU3OQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
