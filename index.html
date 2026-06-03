@@ -1433,13 +1433,15 @@
 
 /* ============ LOGIN — SHA-256 password hashing ============ */
 /*
-  Passwords are NEVER stored in source code in plain text.
-  Default credentials on first run: MASTER / 222  and  002 / 002
+  Passwords are not stored in source code in plain text.
+  Default credentials are stored as SHA-256 hashes only.
   Owner can change passwords from Owner Tools → Change Password.
 */
 const LS_CREDENTIALS  = 'nisargCredentials_v1';
 const LS_MAINTENANCE  = 'nisargMaintenanceMode';
 const LS_PRINT_SETTINGS = 'nisargPrintSettings';
+const DEFAULT_MASTER_HASH = '9b871512327c09ce91dd649b3f96a63b7408ef267c8cc5710114e629730cb61f';
+const DEFAULT_OWNER_HASH  = 'a1dd6837f284625bdb1cb68f1dbc85c5dc4d8b05bae24c94ed5f55c477326ea2';
 let currentUserRole  = 'guest';
 let currentLoginName = '';
 
@@ -1450,11 +1452,9 @@ async function sha256(str) {
 
 async function initCredentials() {
   if (localStorage.getItem(LS_CREDENTIALS)) return;
-  const masterHash = await sha256('222');
-  const ownerHash  = await sha256('002');
   localStorage.setItem(LS_CREDENTIALS, JSON.stringify({
-    master: { user: 'MASTER', hash: masterHash },
-    owner:  { user: '002',    hash: ownerHash  }
+    master: { user: 'MASTER', hash: DEFAULT_MASTER_HASH },
+    owner:  { user: '002',    hash: DEFAULT_OWNER_HASH  }
   }));
 }
 
@@ -3609,5 +3609,5 @@ window.addEventListener('storage', e => {
   }
 });
 </script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061a455ba9d47bc',t:'MTc4MDUyMDU3OQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
