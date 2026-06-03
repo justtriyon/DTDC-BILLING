@@ -1553,10 +1553,12 @@ const PAGE_META = {
 /* ============================================
    STORAGE & DATA
 ============================================ */
-const LS_KEY = 'nisargBillingData_v2';
+const LS_KEY = 'nisargBillingData_final_v4';
 const LS_FB_CFG = 'nisargFirebaseCfg';
 const LS_LAST_BACKUP = 'nisargLastBackup';
+const CLOUD_PATH = 'nisargBillingV4';
 const STARTER_DATA_VERSION = 'seed_5_companies_5000plus_bookings_v3';
+const APP_DATA_VERSION = 'FINAL_V4';
 
 function createStarterData() {
   const starter = {
@@ -1860,6 +1862,7 @@ function createStarterData() {
     ],
     bills: [],
     lastBillNum: 0,
+    appVersion: APP_DATA_VERSION,
     updatedAt: Date.now()
   };
 
@@ -1911,6 +1914,7 @@ function addBulkTestBookings(starter) {
 }
 
 let data = loadLocal();
+if (data && data.appVersion && data.appVersion !== APP_DATA_VERSION) data = null;
 if (!data || (((data.companies || []).length === 0) && ((data.bookings || []).length === 0))) {
   data = createStarterData();
 }
@@ -1953,6 +1957,7 @@ function mergeStarterDataIfMissing() {
   const existingBookingIds = new Set(data.bookings.map(b => b.id));
   const existingAwbs = new Set(data.bookings.map(b => b.awb));
   starter.bookings.forEach(sb => {
+    if (data.removedTestBulkAt && isTestBulkBooking(sb)) return;
     if (existingBookingIds.has(sb.id) || existingAwbs.has(sb.awb)) return;
     const mappedCode = codeMap[sb.companyCode] || sb.companyCode;
     data.bookings.push({ ...sb, companyCode: mappedCode });
@@ -1972,7 +1977,13 @@ function mergeStarterDataIfMissing() {
 
 function forceStarterDataIntoFile() {
   // Heavy seed merge runs only once per seed version, so regular user use stays fast.
-  if (!data || data.seedVersion === STARTER_DATA_VERSION) return false;
+  if (!data) return false;
+  if (data.removedTestBulkAt && Array.isArray(data.bookings)) {
+    const before = data.bookings.length;
+    data.bookings = data.bookings.filter(b => !isTestBulkBooking(b));
+    if (data.bookings.length !== before) saveLocal();
+  }
+  if (data.seedVersion === STARTER_DATA_VERSION) return false;
   return mergeStarterDataIfMissing();
 }
 
@@ -1987,7 +1998,7 @@ let bookingCurrentPage = 1;
 let billingCurrentPage = 1;
 
 function loadLocal() { try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch(e) { return null; } }
-function saveLocal() { data.updatedAt = Date.now(); localStorage.setItem(LS_KEY, JSON.stringify(data)); }
+function saveLocal() { data.appVersion = APP_DATA_VERSION; data.updatedAt = Date.now(); localStorage.setItem(LS_KEY, JSON.stringify(data)); }
 let saveTimer;
 function save() {
   saveLocal();
@@ -2016,10 +2027,31 @@ function mergeCloudData(localData, remoteData) {
   other.companies = other.companies || [];
   other.bookings = other.bookings || [];
   other.bills = other.bills || [];
+  base.deletedCompanyCodes = { ...(other.deletedCompanyCodes || {}), ...(base.deletedCompanyCodes || {}) };
+  base.deletedBookingIds = { ...(other.deletedBookingIds || {}), ...(base.deletedBookingIds || {}) };
+  base.deletedBillNos = { ...(other.deletedBillNos || {}), ...(base.deletedBillNos || {}) };
+
+  const deletedCompanySet = new Set(Object.keys(base.deletedCompanyCodes || {}));
+  const deletedBookingSet = new Set(Object.keys(base.deletedBookingIds || {}));
+  const deletedBillSet = new Set(Object.keys(base.deletedBillNos || {}));
+  const beforeDeleteFilter = base.bookings.length + base.companies.length + base.bills.length;
+  base.companies = base.companies.filter(c => !deletedCompanySet.has(c.code));
+  base.bookings = base.bookings.filter(b => !deletedBookingSet.has(b.id) && !deletedCompanySet.has(b.companyCode));
+  base.bills = base.bills.filter(b => !deletedBillSet.has(b.billNo) && !deletedCompanySet.has(b.companyCode));
+  if (beforeDeleteFilter !== base.bookings.length + base.companies.length + base.bills.length) changed = true;
+
+  const bulkRemovedAt = Math.max(base.removedTestBulkAt || 0, other.removedTestBulkAt || 0);
+  if (bulkRemovedAt) {
+    const beforeBulk = base.bookings.length;
+    base.bookings = base.bookings.filter(b => !isTestBulkBooking(b));
+    base.removedTestBulkAt = bulkRemovedAt;
+    if (base.bookings.length !== beforeBulk) changed = true;
+  }
 
   const companyCodes = new Set(base.companies.map(c => c.code));
   const companyNames = new Set(base.companies.map(c => String(c.name || '').toUpperCase()));
   other.companies.forEach(c => {
+    if (deletedCompanySet.has(c.code)) return;
     const nm = String(c.name || '').toUpperCase();
     if (!companyCodes.has(c.code) && !companyNames.has(nm)) {
       base.companies.push(c);
@@ -2032,8 +2064,8 @@ function mergeCloudData(localData, remoteData) {
   const bookingAwbs = new Set(base.bookings.map(b => String(b.awb || '').toUpperCase()).filter(Boolean));
   const bookingMapById = new Map(base.bookings.map((b,i) => [b.id, i]));
   other.bookings.forEach(b => {
-    const bid = String(b.id || '');
-    if (base.removedTestBulkAt && (bid.includes('-bulk-') || bid.startsWith('admin-test-'))) return;
+    if (deletedBookingSet.has(b.id) || deletedCompanySet.has(b.companyCode)) return;
+    if (bulkRemovedAt && isTestBulkBooking(b)) return;
     const awbKey = String(b.awb || '').toUpperCase();
     if ((b.id && bookingIds.has(b.id)) || (awbKey && bookingAwbs.has(awbKey))) {
       if (b.id && bookingMapById.has(b.id)) {
@@ -2054,6 +2086,7 @@ function mergeCloudData(localData, remoteData) {
 
   const billNos = new Set(base.bills.map(b => b.billNo));
   other.bills.forEach(b => {
+    if (deletedBillSet.has(b.billNo) || deletedCompanySet.has(b.companyCode)) return;
     if (!billNos.has(b.billNo)) {
       base.bills.push(b);
       billNos.add(b.billNo);
@@ -2062,6 +2095,7 @@ function mergeCloudData(localData, remoteData) {
   });
 
   base.lastBillNum = Math.max(base.lastBillNum || 0, other.lastBillNum || 0);
+  base.appVersion = APP_DATA_VERSION;
   base.updatedAt = Math.max(localUpdated, remoteUpdated, Date.now());
   return { data: base, changed };
 }
@@ -2078,7 +2112,7 @@ function initFirebase() {
       if (snap.val() === true) setStatus('Synced', 'online');
       else setStatus('Offline (will sync)', 'offline');
     });
-    db.ref('nisargBillingV2').on('value', snap => {
+    db.ref(CLOUD_PATH).on('value', snap => {
       const remote = snap.val();
       if (!remote) { cloudPush(); return; }
       const merged = mergeCloudData(data, remote);
@@ -2097,7 +2131,7 @@ function cloudPush() {
   if (!db) return;
   if (suppressNextCloudWrite) { suppressNextCloudWrite = false; return; }
   setStatus('Syncing…', 'syncing');
-  db.ref('nisargBillingV2').set(data)
+  db.ref(CLOUD_PATH).set(data)
     .then(() => setStatus('Synced', 'online'))
     .catch(err => { setStatus('Sync failed', 'offline'); console.error(err); });
 }
@@ -2126,6 +2160,10 @@ function escapeHtml(s) { if (s == null) return ''; return String(s).replace(/&/g
 function fmtAmount(n) { return (parseFloat(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2, maximumFractionDigits:2}); }
 function getCompany(code) { return data.companies.find(c => c.code === code); }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2, 5); }
+function isTestBulkBooking(b) {
+  const id = String((b && b.id) || '');
+  return id.includes('-bulk-') || id.startsWith('admin-test-');
+}
 
 const todayFormatted = formatDMY(todayStr());
 document.getElementById('todayDate').textContent = todayFormatted;
@@ -2359,8 +2397,16 @@ function deleteCompany(code) {
   for (let i = 0; i < data.bookings.length; i++) {
     if (data.bookings[i].companyCode !== code) keptBookings.push(data.bookings[i]);
   }
+  const removedBookingIds = data.bookings.filter(b => b.companyCode === code).map(b => b.id);
   data.bookings = keptBookings;
+  const removedBillNos = (data.bills || []).filter(b => b.companyCode === code).map(b => b.billNo);
   data.bills = (data.bills || []).filter(b => b.companyCode !== code);
+  data.deletedCompanyCodes = data.deletedCompanyCodes || {};
+  data.deletedBookingIds = data.deletedBookingIds || {};
+  data.deletedBillNos = data.deletedBillNos || {};
+  data.deletedCompanyCodes[code] = Date.now();
+  removedBookingIds.forEach(id => { if (id) data.deletedBookingIds[id] = Date.now(); });
+  removedBillNos.forEach(no => { if (no) data.deletedBillNos[no] = Date.now(); });
 
   save();
   refreshCompanyDropdowns();
@@ -2608,6 +2654,8 @@ function deleteBooking(id) {
   if (b.billNo) msg += '\n\nWarning: This booking is part of Bill ' + b.billNo;
   if (!confirm(msg)) return;
   data.bookings = data.bookings.filter(x => x.id !== id);
+  data.deletedBookingIds = data.deletedBookingIds || {};
+  data.deletedBookingIds[id] = Date.now();
   save(); renderBookings();
   toast('Deleted');
 }
@@ -2863,6 +2911,8 @@ function deleteBill(billNo) {
   if (!confirm('Delete bill '+billNo+'? Bookings will become unbilled again.')) return;
   data.bookings.forEach(b => { if (b.billNo === billNo) b.billNo = ''; });
   data.bills = data.bills.filter(b => b.billNo !== billNo);
+  data.deletedBillNos = data.deletedBillNos || {};
+  data.deletedBillNos[billNo] = Date.now();
   save();
   renderBillsHistory(); renderBookings();
   toast('Deleted');
@@ -3160,7 +3210,10 @@ function removeOwnerTestBookings() {
   if (currentUserRole !== 'owner') return alert('Owner login required');
   if (!confirm('Remove all test/bulk bookings? Normal user entries will remain.')) return;
   const before = data.bookings.length;
-  data.bookings = data.bookings.filter(b => !(String(b.id||'').includes('-bulk-') || String(b.id||'').startsWith('admin-test-')));
+  const removedBulkIds = data.bookings.filter(b => isTestBulkBooking(b)).map(b => b.id);
+  data.bookings = data.bookings.filter(b => !isTestBulkBooking(b));
+  data.deletedBookingIds = data.deletedBookingIds || {};
+  removedBulkIds.forEach(id => { if (id) data.deletedBookingIds[id] = Date.now(); });
   data.removedTestBulkAt = Date.now();
   data.seedVersion = STARTER_DATA_VERSION;
   save();
@@ -3432,6 +3485,7 @@ window.addEventListener('storage', e => {
   if (e.key === LS_KEY && e.newValue) {
     try {
       const newer = JSON.parse(e.newValue);
+      if (newer.appVersion && newer.appVersion !== APP_DATA_VERSION) return;
       if (newer.updatedAt > (data.updatedAt||0)) { data = newer; renderAll(); }
     } catch(err) {}
   }
@@ -3439,5 +3493,5 @@ window.addEventListener('storage', e => {
 </script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a04f48590e76a7a6',t:'MTc4MDMyODA2OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a060190e1f903bbc',t:'MTc4MDUwNDM4OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
