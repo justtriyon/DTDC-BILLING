@@ -1466,7 +1466,7 @@
         </div>
         <div class="form-field">
           <label>Weight (kg) <span class="req">*</span></label>
-          <input type="number" step="0.001" id="bk_weight" placeholder="2.500" oninput="recalcAmount()"/>
+          <input type="number" step="1" id="bk_weight" placeholder="3" oninput="recalcAmount()" onblur="normalizeBookingWeight()" onkeydown="handleWeightKey(event)"/>
         </div>
         <div class="form-field">
           <label>Amount (&#8377;)</label>
@@ -3083,6 +3083,29 @@ function openEditBooking(id) {
   document.getElementById('bookingModal').classList.add('show');
 }
 
+function roundUpWeightValue(v) {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  return Math.ceil(n);
+}
+
+function normalizeBookingWeight() {
+  const el = document.getElementById('bk_weight');
+  if (!el) return '';
+  const rounded = roundUpWeightValue(el.value);
+  if (rounded !== '') el.value = rounded;
+  recalcAmount();
+  return el.value;
+}
+
+function handleWeightKey(ev) {
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    normalizeBookingWeight();
+    document.getElementById('bk_amount')?.focus();
+  }
+}
+
 function recalcAmount(keepManual) {
   const code = document.getElementById('bk_company').value;
   const mode = document.getElementById('bk_mode').value;
@@ -3101,19 +3124,14 @@ function saveBooking() {
   const date = document.getElementById('bk_date').value;
   const awb = document.getElementById('bk_awb').value.trim().toUpperCase();
   const mode = document.getElementById('bk_mode').value;
-  const weight = document.getElementById('bk_weight').value;
-  const amount = document.getElementById('bk_amount').value;
-  if (!code) {
-    if (!silent) alert('Select party');
-    billingRowsCache = [];
-    billingSelectedIds = new Set();
-    document.getElementById('billSummaryBar').style.display = 'none';
-    document.getElementById('billingBody').innerHTML = '<tr><td colspan="10" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>';
-    return;
-  }
+  let weight = document.getElementById('bk_weight').value;
+  let amount = document.getElementById('bk_amount').value;
+  if (!code) { alert('Select party'); return; }
   if (!date) { alert('Date required'); return; }
   if (!awb) { alert('AWB / POD required'); return; }
   if (!mode) { alert('Select mode'); return; }
+  weight = normalizeBookingWeight();
+  amount = document.getElementById('bk_amount').value;
   if (!weight) { alert('Weight required'); return; }
   const editId = document.getElementById('bk_editId').value;
   const duplicateAwb = data.bookings.find(b => (b.awb || '').toUpperCase() === awb && b.id !== editId);
@@ -3217,7 +3235,7 @@ function importBookingsCSV(ev) {
         let comp=partyCode?getCompany(partyCode):null; if(!comp&&partyName) comp=(data.companies||[]).find(c=>String(c.name||'').toUpperCase()===partyName);
         if(!comp){missingCompanies.add(partyCode||partyName||'(blank party)'); invalid++; continue;}
         const date=parseImportDate(val(r,['date','bookingdate']))||todayStr(); let mode=val(r,['mode','service']).toUpperCase(); if(!['BY AIR','BY SEA','BY ROAD'].includes(mode)) mode='BY ROAD';
-        const weight=parseFloat(String(val(r,['weight','wt','wtkg','weightkg'])).replace(/,/g,''))||0; const rateForMode=(comp.rates&&comp.rates[mode])||0;
+        const rawWeight=parseFloat(String(val(r,['weight','wt','wtkg','weightkg'])).replace(/,/g,''))||0; const weight=rawWeight>0?Math.ceil(rawWeight):0; const rateForMode=(comp.rates&&comp.rates[mode])||0;
         const amountRaw=String(val(r,['amount','amountoptionalauto','netamount','netamt','amt'])).replace(/,/g,'').trim(); let amount=amountRaw?parseFloat(amountRaw):NaN; if(!Number.isFinite(amount)||amount<=0) amount=weight*rateForMode;
         toAdd.push({id:uid(),companyCode:comp.code,date,awb,destination:val(r,['destination','dest','city']).toUpperCase(),consignee:'',mode,weight,amount:parseFloat(amount||0),billNo:''}); existingAwb.add(awb);
       }
@@ -4331,5 +4349,5 @@ window.addEventListener('storage', e => {
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a07a24af4b6fff61',t:'MTc4MDc3NzQ5NA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a07a3dd87f202e2c',t:'MTc4MDc3ODUyNQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
