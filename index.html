@@ -1194,6 +1194,20 @@
       </div>
 
       <div class="card" style="margin-bottom:14px;">
+        <div class="card-header"><h3>Google User Accounts</h3></div>
+        <div class="card-body">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+            <button class="btn btn-primary" onclick="loadUserAccounts()">Refresh Users</button>
+            <button class="btn btn-secondary" onclick="openMyGoogleData()">Back to My Data</button>
+          </div>
+          <div class="info-bar" id="activeAccountBar" style="margin-bottom:10px;">Active account: --</div>
+          <div class="table-wrap" style="border-radius:0; max-height:260px;">
+            <table class="data"><thead><tr><th>Email</th><th>Name</th><th>Last Login</th><th>UID</th><th>Action</th></tr></thead><tbody id="userAccountsBody"><tr><td colspan="5" style="text-align:center; padding:20px;">Click Refresh Users</td></tr></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:14px;">
         <div class="card-header"><h3>Data Management Tools</h3></div>
         <div class="card-body" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
           <button class="btn btn-success" onclick="downloadBackup()">Download Full Backup</button>
@@ -1699,15 +1713,9 @@ function handleMaintenanceKey(ev) {
 function showLoginScreen() {
   document.body.classList.add('login-locked');
   const screen = document.getElementById('loginScreen');
-  if (screen) {
-    screen.style.display = 'flex';
-    screen.style.position = 'fixed';
-    screen.style.inset = '0';
-    screen.style.zIndex = '99999';
-  }
-  const loginUser = document.getElementById('loginUser');
-  if (loginUser) setTimeout(() => loginUser.focus(), 50);
+  if (screen) screen.style.display = 'none';
   applyMaintenanceGate();
+  if (localStorage.getItem(LS_FB_CFG)) setTimeout(() => showGoogleAuthGate(), 100);
 }
 
 if (document.readyState === 'loading') {
@@ -2194,6 +2202,8 @@ function forceStarterDataIntoFile() {
 let db = null;
 let auth = null;
 let activeCloudUser = null;
+let activeDataUid = null;
+let activeDataEmail = '';
 let cloudDataRef = null;
 let suppressNextCloudWrite = false;
 let billingRowsCache = [];
@@ -2400,8 +2410,9 @@ function initFirebaseAppOnly() {
   } catch(e) { setStatus('Cloud error', 'offline'); console.error(e); return false; }
 }
 
-function getCloudPath() {
-  return CLOUD_PATH_BASE + '/' + activeCloudUser.uid + '/appData';
+function getCloudPath(uid) {
+  const targetUid = uid || activeDataUid || activeCloudUser?.uid;
+  return CLOUD_PATH_BASE + '/' + targetUid + '/appData';
 }
 
 function applyGoogleRole(user) {
@@ -2413,14 +2424,27 @@ function applyGoogleRole(user) {
   setupRoleUI();
 }
 
-function initFirebaseForCurrentUser() {
+function saveUserProfile(user) {
+  if (!db || !user) return;
+  const profile = { uid: user.uid, email: user.email || '', name: user.displayName || '', photoURL: user.photoURL || '', lastLogin: Date.now(), lastLoginText: new Date().toLocaleString() };
+  db.ref('userProfiles/' + user.uid).update(profile).catch(err => console.warn('profile save failed', err));
+  if (String(user.email || '').toLowerCase() === OWNER_GOOGLE_EMAIL.toLowerCase()) {
+    // Works if rules allow; otherwise add this UID manually in /admins.
+    db.ref('admins/' + user.uid).set(true).catch(()=>{});
+  }
+}
+
+function initFirebaseForCurrentUser(targetUid, targetEmail) {
   if (!db || !activeCloudUser) return;
   if (cloudDataRef) cloudDataRef.off();
   applyGoogleRole(activeCloudUser);
-  LS_KEY = LS_KEY_BASE + '_' + activeCloudUser.uid;
+  saveUserProfile(activeCloudUser);
+  activeDataUid = targetUid || activeCloudUser.uid;
+  activeDataEmail = targetEmail || activeCloudUser.email || '';
+  LS_KEY = LS_KEY_BASE + '_' + activeDataUid;
   data = loadLocal() || createEmptyData();
   renderAll();
-  cloudDataRef = db.ref(getCloudPath());
+  cloudDataRef = db.ref(getCloudPath(activeDataUid));
   cloudDataRef.on('value', snap => {
     const remote = snap.val();
     if (!remote) { cloudPush(); return; }
@@ -2430,21 +2454,28 @@ function initFirebaseForCurrentUser() {
       saveLocal();
       renderAll();
       setTimeout(() => cloudPush(), 900);
-      toast('Google account data merged');
+      toast('Account data merged');
     }
   });
+  document.body.classList.remove('login-locked');
+  document.getElementById('loginScreen').style.display = 'none';
+  hideGoogleAuthGate();
   setStatus('Synced', 'online');
-  toast('Google account: ' + (activeCloudUser.email || 'signed in'));
+  toast((activeDataUid === activeCloudUser.uid ? 'My account' : 'Viewing user') + ': ' + activeDataEmail);
 }
 
 function initFirebase() {
   if (!initFirebaseAppOnly()) return;
-  if (auth && auth.currentUser) {
-    activeCloudUser = auth.currentUser;
-    initFirebaseForCurrentUser();
-  } else {
-    showGoogleAuthGate();
-  }
+  auth.onAuthStateChanged(user => {
+    if (user) {
+      activeCloudUser = user;
+      initFirebaseForCurrentUser();
+    } else {
+      activeCloudUser = null;
+      activeDataUid = null;
+      showGoogleAuthGate();
+    }
+  });
 }
 
 function cloudPush() {
@@ -2459,6 +2490,9 @@ function cloudPush() {
 function showGoogleAuthGate() {
   if (!localStorage.getItem(LS_FB_CFG)) return;
   if (!initFirebaseAppOnly()) return;
+  const localLogin = document.getElementById('loginScreen');
+  if (localLogin) localLogin.style.display = 'none';
+  document.body.classList.add('login-locked');
   const modal = document.getElementById('googleAuthModal');
   if (modal && !activeCloudUser) modal.classList.add('show');
 }
@@ -2482,14 +2516,16 @@ function continueOfflineAccount() {
   activeCloudUser = null;
   LS_KEY = LS_KEY_BASE + '_offline';
   data = loadLocal() || createEmptyData();
-  saveLocal(); renderAll(); hideGoogleAuthGate(); setStatus('Offline account', 'offline');
+  saveLocal(); renderAll(); hideGoogleAuthGate(); document.body.classList.remove('login-locked'); setStatus('Offline account', 'offline');
 }
 
 function googleSignOut() {
   if (auth) auth.signOut();
   activeCloudUser = null;
+  activeDataUid = null;
   if (cloudDataRef) cloudDataRef.off();
   cloudDataRef = null;
+  document.body.classList.add('login-locked');
   showGoogleAuthGate();
 }
 
@@ -3817,6 +3853,7 @@ function renderOwnerDashboard() {
   }
   loadPrintSettingsUI();
   updateSnapshotStatus();
+  updateActiveAccountBar();
 }
 
 function addOwnerTestBookings(count) {
@@ -3920,6 +3957,59 @@ function pushLocalDataAsFinalCloud() {
   db.ref(getCloudPath()).set(data)
     .then(() => { saveLocal(); setStatus('Synced', 'online'); toast('Local data pushed as final cloud'); })
     .catch(err => { setStatus('Cloud push failed', 'offline'); alert('Cloud push failed: ' + err.message); logAppError('pushLocalDataAsFinalCloud', err); });
+}
+
+function updateActiveAccountBar() {
+  const el = document.getElementById('activeAccountBar');
+  if (!el) return;
+  const mine = activeCloudUser && activeDataUid === activeCloudUser.uid;
+  el.innerHTML = '<strong>Active Data:</strong> ' + escapeHtml(activeDataEmail || '-') + (mine ? ' (My Data)' : ' (Admin Viewing)');
+}
+
+function loadUserAccounts() {
+  if (currentUserRole !== 'owner') return alert('Owner Google account required');
+  if (!db) return alert('Firebase not connected');
+  db.ref('userProfiles').once('value').then(snap => {
+    const body = document.getElementById('userAccountsBody');
+    const obj = snap.val() || {};
+    const users = Object.values(obj).sort((a,b)=>String(a.email||'').localeCompare(String(b.email||'')));
+    if (!users.length) { body.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No users found yet.</td></tr>'; return; }
+    body.innerHTML = users.map(u => '<tr>'+
+      '<td>'+escapeHtml(u.email||'')+'</td>'+
+      '<td>'+escapeHtml(u.name||'-')+'</td>'+
+      '<td>'+escapeHtml(u.lastLoginText||'')+'</td>'+
+      '<td class="mono" style="font-size:10px;">'+escapeHtml(u.uid||'')+'</td>'+
+      '<td><button class="btn btn-sm btn-primary" onclick="openUserData(\''+escapeHtml(u.uid||'')+'\',\''+escapeHtml(u.email||'')+'\')">Open Data</button> '+
+      '<button class="btn btn-sm btn-danger" onclick="deleteUserCloudData(\''+escapeHtml(u.uid||'')+'\')">Delete Data</button></td>'+
+    '</tr>').join('');
+    updateActiveAccountBar();
+  }).catch(err => alert('User list failed: ' + err.message));
+}
+
+function openUserData(uid, email) {
+  if (currentUserRole !== 'owner') return alert('Owner Google account required');
+  if (!uid) return;
+  createSafetySnapshot('before_open_user_' + uid);
+  initFirebaseForCurrentUser(uid, email);
+  switchPanel('dashboard');
+  setTimeout(loadUserAccounts, 300);
+}
+
+function openMyGoogleData() {
+  if (!activeCloudUser) return alert('Google login required');
+  initFirebaseForCurrentUser(activeCloudUser.uid, activeCloudUser.email || '');
+  switchPanel('dashboard');
+  setTimeout(loadUserAccounts, 300);
+}
+
+function deleteUserCloudData(uid) {
+  if (currentUserRole !== 'owner') return alert('Owner Google account required');
+  if (!uid) return;
+  if (uid === activeCloudUser?.uid && !confirm('This is your own account data. Delete anyway?')) return;
+  if (!confirm('Delete selected user cloud data? This cannot be undone without backup.')) return;
+  db.ref(CLOUD_PATH_BASE + '/' + uid + '/appData').remove()
+    .then(() => { toast('User cloud data deleted'); if (uid === activeDataUid) openMyGoogleData(); })
+    .catch(err => alert('Delete user data failed: ' + err.message));
 }
 
 /* ============================================
@@ -4142,7 +4232,7 @@ initCredentials().then(() => {
   if (!localStorage.getItem(LS_FB_CFG)) {
     document.getElementById('setupScreen').style.display = 'block';
     setStatus('Offline', 'offline');
-  } else { initFirebaseAppOnly(); }
+  } else { initFirebase(); }
 });
 
 window.addEventListener('beforeunload', () => { saveLocal(); });
@@ -4157,6 +4247,6 @@ window.addEventListener('storage', e => {
 });
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a0797b528da5de58',t:'MTc4MDc3MDU1Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a079c5f0eeb5ff97',t:'MTc4MDc3MzYxNA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
 </html>
