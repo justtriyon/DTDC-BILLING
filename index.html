@@ -841,6 +841,14 @@
         <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
         <span>Bill History</span>
       </div>
+      <div class="nav-item" data-panel="gst" onclick="switchPanel('gst')">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h5M9 9h1"/></svg></span>
+        <span>GST Report</span>
+      </div>
+      <div class="nav-item" data-panel="ledger" onclick="switchPanel('ledger')">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg></span>
+        <span>Ledger</span>
+      </div>
     </div>
 
     <div class="sidebar-section">
@@ -985,9 +993,12 @@
         <input type="date" id="filterDate" class="form-control" onchange="bookingCurrentPage=1; renderBookings()"/>
         <button class="btn btn-secondary" onclick="document.getElementById('filterDate').value=''; bookingCurrentPage=1; renderBookings();">Clear</button>
         <label>Search:</label>
-        <input type="text" id="bookingSearch" class="form-control" style="flex:1; min-width:200px;" placeholder="AWB / consignee / destination..." oninput="bookingCurrentPage=1; renderBookings()"/>
+        <input type="text" id="bookingSearch" class="form-control" style="flex:1; min-width:200px;" placeholder="AWB / destination..." oninput="bookingCurrentPage=1; renderBookings()"/>
         <span style="flex:1;"></span>
         <button class="btn btn-secondary" onclick="exportBookingsExcel()">Export Excel</button>
+        <button class="btn btn-secondary" onclick="downloadImportTemplate()">Import Format</button>
+        <button class="btn btn-primary" onclick="document.getElementById('bookingImportFile').click()">Import Excel/CSV</button>
+        <input type="file" id="bookingImportFile" accept=".csv,.txt" style="display:none;" onchange="importBookingsCSV(event)"/>
         <button class="btn btn-primary" onclick="openBookingForm()">+ New Booking</button>
       </div>
 
@@ -1000,7 +1011,6 @@
                 <th>Date</th>
                 <th>POD / AWB</th>
                 <th>Party</th>
-                <th>Consignee</th>
                 <th>Destination</th>
                 <th class="text-center">Mode</th>
                 <th class="text-right">Wt (kg)</th>
@@ -1081,7 +1091,6 @@
                 <th class="row-num">Sr</th>
                 <th>Date</th>
                 <th>POD / AWB</th>
-                <th>Consignee</th>
                 <th>Destination</th>
                 <th class="text-center">Mode</th>
                 <th class="text-right">Wt (kg)</th>
@@ -1091,7 +1100,7 @@
               </tr>
             </thead>
             <tbody id="billingBody">
-              <tr><td colspan="11" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>
+              <tr><td colspan="10" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1123,6 +1132,57 @@
     </section>
 
 
+
+
+    <!-- ============ GST REPORT ============ -->
+    <section class="panel" id="panel-gst">
+      <div class="toolbar">
+        <label>From:</label>
+        <input type="date" id="gstFrom" class="form-control" onchange="renderGSTReport()"/>
+        <label>To:</label>
+        <input type="date" id="gstTo" class="form-control" onchange="renderGSTReport()"/>
+        <label>Party:</label>
+        <select id="gstCompany" class="form-control" onchange="renderGSTReport()"><option value="">All Parties</option></select>
+        <button class="btn btn-secondary" onclick="setGSTReportMonth()">This Month</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('gstFrom').value=''; document.getElementById('gstTo').value=''; renderGSTReport();">All</button>
+        <span style="flex:1;"></span>
+        <button class="btn btn-success" onclick="exportGSTReportExcel()">Export GST Excel</button>
+      </div>
+      <div id="gstSummaryBar" class="info-bar" style="margin-bottom:14px; display:none;"></div>
+      <div class="card">
+        <div class="card-header"><h3>GST Report - B2B / SEZ / DE Format</h3></div>
+        <div class="table-wrap" style="border:none; border-radius:0; max-height:68vh;">
+          <table class="data"><thead><tr>
+            <th>GSTIN/UIN of Recipient</th><th>Receiver Name</th><th>Invoice Number</th><th>Invoice date</th><th class="text-right">Invoice Value</th><th>Place Of Supply</th><th class="text-center">Reverse Charge</th><th>Applicable % of Tax Rate</th><th>Invoice Type</th><th>E-Commerce GSTIN</th><th class="text-right">Rate</th><th class="text-right">Taxable Value</th><th class="text-right">Cess Amount</th>
+          </tr></thead><tbody id="gstReportBody"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ LEDGER REPORT ============ -->
+    <section class="panel" id="panel-ledger">
+      <div class="toolbar">
+        <label>Party:</label>
+        <select id="ledgerCompany" class="form-control" onchange="renderLedgerReport()"><option value="">-- Select Party --</option></select>
+        <label>From:</label>
+        <input type="date" id="ledgerFrom" class="form-control" onchange="renderLedgerReport()"/>
+        <label>To:</label>
+        <input type="date" id="ledgerTo" class="form-control" onchange="renderLedgerReport()"/>
+        <button class="btn btn-secondary" onclick="setLedgerMonth()">This Month</button>
+        <button class="btn btn-secondary" onclick="document.getElementById('ledgerFrom').value=''; document.getElementById('ledgerTo').value=''; renderLedgerReport();">All</button>
+        <span style="flex:1;"></span>
+        <button class="btn btn-success" onclick="exportLedgerReportExcel()">Export Ledger</button>
+        <button class="btn btn-primary" onclick="printLedgerReport()">Print Ledger</button>
+        <button class="btn btn-primary" onclick="openCreditPaymentForm()">+ Add Credit</button>
+      </div>
+      <div id="ledgerSummaryBar" class="info-bar" style="margin-bottom:14px; display:none;"></div>
+      <div class="card">
+        <div class="card-header"><h3 id="ledgerTitle">Party Ledger</h3></div>
+        <div class="table-wrap" style="border:none; border-radius:0; max-height:68vh;">
+          <table class="data"><thead><tr><th style="width:90px;">Date</th><th>Particulars</th><th style="width:160px;">Voucher / Bill No.</th><th class="text-right">Debit</th><th class="text-right">Credit</th><th class="text-right">Balance</th></tr></thead><tbody id="ledgerReportBody"></tbody></table>
+        </div>
+      </div>
+    </section>
 
     <!-- ============ OWNER TOOLS ============ -->
     <section class="panel" id="panel-owner">
@@ -1332,10 +1392,6 @@
         <input type="text" id="bk_destination" placeholder="e.g. GURGAON, MUMBAI, JABALPUR" style="text-transform:uppercase;"/>
       </div>
 
-      <div class="form-field" style="margin-top:12px;">
-        <label>Consignee Name</label>
-        <input type="text" id="bk_consignee" placeholder="Final receiver name (optional)" style="text-transform:uppercase;"/>
-      </div>
 
       <div class="form-grid cols-3" style="margin-top:12px;">
         <div class="form-field">
@@ -1401,6 +1457,27 @@
       <button class="btn btn-secondary" onclick="closeModal('changePasswordModal')">Cancel</button>
       <button class="btn btn-success" onclick="saveChangedPassword()">Save Password</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: CREDIT / PAYMENT ============ -->
+<div class="modal-bg" id="creditPaymentModal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header"><h3>Add Credit / Payment Received</h3><button class="modal-close" onclick="closeModal('creditPaymentModal')">&times;</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="pay_editId"/>
+      <div class="form-grid cols-2">
+        <div class="form-field"><label>Party <span class="req">*</span></label><select id="pay_company" class="form-control"></select></div>
+        <div class="form-field"><label>Date <span class="req">*</span></label><input type="date" id="pay_date" class="form-control"/></div>
+      </div>
+      <div class="form-grid cols-2" style="margin-top:12px;">
+        <div class="form-field"><label>Amount <span class="req">*</span></label><input type="number" id="pay_amount" class="form-control" step="0.01" placeholder="0.00"/></div>
+        <div class="form-field"><label>Payment Mode</label><select id="pay_mode" class="form-control"><option>Cash</option><option>UPI</option><option>Bank Transfer</option><option>Cheque</option><option>Other</option></select></div>
+      </div>
+      <div class="form-field" style="margin-top:12px;"><label>Reference No.</label><input type="text" id="pay_ref" class="form-control" placeholder="UPI / Cheque / Bank Ref No."/></div>
+      <div class="form-field" style="margin-top:12px;"><label>Remarks</label><input type="text" id="pay_remarks" class="form-control" placeholder="Payment details"/></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('creditPaymentModal')">Cancel</button><button class="btn btn-success" onclick="saveCreditPayment()">Save Credit</button></div>
   </div>
 </div>
 
@@ -1642,6 +1719,8 @@ const PAGE_META = {
   bookings: { title: 'Booking Entry', subtitle: 'View and manage all shipment bookings' },
   billing: { title: 'Generate Bill', subtitle: 'Create tax invoices for selected bookings' },
   bills: { title: 'Bill History', subtitle: 'View and reprint all generated invoices' },
+  gst: { title: 'GST Report', subtitle: 'B2B invoice GST export format' },
+  ledger: { title: 'Party Ledger', subtitle: 'Party-wise bill ledger and running balance' },
   owner: { title: 'Owner Tools', subtitle: 'Admin dashboard, data management and test tools' }
 };
 
@@ -1959,6 +2038,7 @@ function createStarterData() {
       { id: 'seed-k001-extra-040', companyCode: 'K001', date: '2026-04-23', awb: 'D102568760200', destination: 'MUMBAI', consignee: 'TELANGANA CONTROL PANELS', mode: 'BY ROAD', weight: 16.750, amount: 837.50, billNo: '' }
     ],
     bills: [],
+    payments: [],
     lastBillNum: 0,
     appVersion: APP_DATA_VERSION,
     updatedAt: Date.now()
@@ -2181,12 +2261,15 @@ function mergeCloudData(localData, remoteData) {
   base.companies = base.companies || [];
   base.bookings = base.bookings || [];
   base.bills = base.bills || [];
+  base.payments = base.payments || [];
   other.companies = other.companies || [];
   other.bookings = other.bookings || [];
   other.bills = other.bills || [];
+  other.payments = other.payments || [];
   base.deletedCompanyCodes = { ...(other.deletedCompanyCodes || {}), ...(base.deletedCompanyCodes || {}) };
   base.deletedBookingIds = { ...(other.deletedBookingIds || {}), ...(base.deletedBookingIds || {}) };
   base.deletedBillNos = { ...(other.deletedBillNos || {}), ...(base.deletedBillNos || {}) };
+  base.deletedPaymentIds = { ...(other.deletedPaymentIds || {}), ...(base.deletedPaymentIds || {}) };
   base.revivedCompanyCodes = { ...(other.revivedCompanyCodes || {}), ...(base.revivedCompanyCodes || {}) };
   Object.keys(base.revivedCompanyCodes || {}).forEach(code => {
     if ((base.revivedCompanyCodes[code] || 0) >= (base.deletedCompanyCodes[code] || 0)) delete base.deletedCompanyCodes[code];
@@ -2195,11 +2278,13 @@ function mergeCloudData(localData, remoteData) {
   const deletedCompanySet = new Set(Object.keys(base.deletedCompanyCodes || {}));
   const deletedBookingSet = new Set(Object.keys(base.deletedBookingIds || {}));
   const deletedBillSet = new Set(Object.keys(base.deletedBillNos || {}));
-  const beforeDeleteFilter = base.bookings.length + base.companies.length + base.bills.length;
+  const deletedPaymentSet = new Set(Object.keys(base.deletedPaymentIds || {}));
+  const beforeDeleteFilter = base.bookings.length + base.companies.length + base.bills.length + base.payments.length;
   base.companies = base.companies.filter(c => !deletedCompanySet.has(c.code));
   base.bookings = base.bookings.filter(b => !deletedBookingSet.has(b.id) && !deletedCompanySet.has(b.companyCode));
   base.bills = base.bills.filter(b => !deletedBillSet.has(b.billNo) && !deletedCompanySet.has(b.companyCode));
-  if (beforeDeleteFilter !== base.bookings.length + base.companies.length + base.bills.length) changed = true;
+  base.payments = base.payments.filter(p => !deletedPaymentSet.has(p.id) && !deletedCompanySet.has(p.companyCode));
+  if (beforeDeleteFilter !== base.bookings.length + base.companies.length + base.bills.length + base.payments.length) changed = true;
 
   const bulkRemovedAt = Math.max(base.removedTestBulkAt || 0, other.removedTestBulkAt || 0);
   if (bulkRemovedAt) {
@@ -2251,6 +2336,16 @@ function mergeCloudData(localData, remoteData) {
     if (!billNos.has(b.billNo)) {
       base.bills.push(b);
       billNos.add(b.billNo);
+      changed = true;
+    }
+  });
+
+  const paymentIds = new Set(base.payments.map(p => p.id).filter(Boolean));
+  other.payments.forEach(p => {
+    if (deletedPaymentSet.has(p.id) || deletedCompanySet.has(p.companyCode)) return;
+    if (!paymentIds.has(p.id)) {
+      base.payments.push(p);
+      if (p.id) paymentIds.add(p.id);
       changed = true;
     }
   });
@@ -2346,6 +2441,8 @@ function switchPanel(name) {
   if (name === 'bookings') { refreshCompanyDropdowns(); renderBookings(); }
   if (name === 'billing') { refreshCompanyDropdowns(); initBillingPanel(); }
   if (name === 'bills') renderBillsHistory();
+  if (name === 'gst') { refreshCompanyDropdowns(); initGSTReportPanel(); renderGSTReport(); }
+  if (name === 'ledger') { refreshCompanyDropdowns(); initLedgerPanel(); renderLedgerReport(); }
   if (name === 'owner') renderOwnerDashboard();
 }
 
@@ -2573,13 +2670,17 @@ function deleteCompany(code) {
   const removedBookingIds = data.bookings.filter(b => b.companyCode === code).map(b => b.id);
   data.bookings = keptBookings;
   const removedBillNos = (data.bills || []).filter(b => b.companyCode === code).map(b => b.billNo);
+  const removedPaymentIds = (data.payments || []).filter(p => p.companyCode === code).map(p => p.id);
   data.bills = (data.bills || []).filter(b => b.companyCode !== code);
+  data.payments = (data.payments || []).filter(p => p.companyCode !== code);
   data.deletedCompanyCodes = data.deletedCompanyCodes || {};
   data.deletedBookingIds = data.deletedBookingIds || {};
   data.deletedBillNos = data.deletedBillNos || {};
+  data.deletedPaymentIds = data.deletedPaymentIds || {};
   data.deletedCompanyCodes[code] = Date.now();
   removedBookingIds.forEach(id => { if (id) data.deletedBookingIds[id] = Date.now(); });
   removedBillNos.forEach(no => { if (no) data.deletedBillNos[no] = Date.now(); });
+  removedPaymentIds.forEach(id => { if (id) data.deletedPaymentIds[id] = Date.now(); });
 
   save();
   refreshCompanyDropdowns();
@@ -2595,7 +2696,7 @@ function deleteCompany(code) {
     if (document.getElementById('billCompany').value === code) {
       document.getElementById('billCompany').value = '';
       billingRowsCache = [];
-      document.getElementById('billingBody').innerHTML = '<tr><td colspan="11" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>';
+      document.getElementById('billingBody').innerHTML = '<tr><td colspan="10" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>';
       document.getElementById('billSummaryBar').style.display = 'none';
     }
   }
@@ -2615,11 +2716,17 @@ function refreshCompanyDropdowns() {
     const sel = document.getElementById(id);
     if (sel) { const cur = sel.value; sel.innerHTML = opts; sel.value = cur; }
   });
+  const allPartyOptions = '<option value="">All Parties</option>' +
+    data.companies.map(c => '<option value="'+escapeHtml(c.code)+'">'+escapeHtml(c.code)+' — '+escapeHtml(c.name)+'</option>').join('');
   const fc = document.getElementById('filterCompany');
-  if (fc) {
-    const cur = fc.value;
-    fc.innerHTML = '<option value="">All Parties</option>' + data.companies.map(c => '<option value="'+escapeHtml(c.code)+'">'+escapeHtml(c.code)+' — '+escapeHtml(c.name)+'</option>').join('');
-    fc.value = cur;
+  if (fc) { const cur = fc.value; fc.innerHTML = allPartyOptions; fc.value = cur; }
+  const gc = document.getElementById('gstCompany');
+  if (gc) { const cur = gc.value; gc.innerHTML = allPartyOptions; gc.value = cur; }
+  const lc = document.getElementById('ledgerCompany');
+  if (lc) {
+    const cur = lc.value;
+    lc.innerHTML = '<option value="">-- Select Party --</option>' + data.companies.map(c => '<option value="'+escapeHtml(c.code)+'">'+escapeHtml(c.code)+' — '+escapeHtml(c.name)+'</option>').join('');
+    lc.value = cur;
   }
 }
 
@@ -2635,7 +2742,7 @@ function getFilteredBookings() {
     if (fDate && b.date !== fDate) return false;
     if (search) {
       const c = getCompany(b.companyCode);
-      const blob = ((b.awb||'')+' '+(b.destination||'')+' '+(b.consignee||'')+' '+(c?c.name:'')).toLowerCase();
+      const blob = ((b.awb||'')+' '+(b.destination||'')+' '+(c?c.name:'')).toLowerCase();
       if (!blob.includes(search)) return false;
     }
     return true;
@@ -2646,7 +2753,7 @@ function renderBookings() {
   const tbody = document.getElementById('bookingsBody');
   const filtered = getFilteredBookings();
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12"><div class="empty"><div class="title">No bookings found</div><div class="sub">Create a new booking entry to begin.</div><button class="btn btn-primary" onclick="openBookingForm()">+ New Booking</button></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11"><div class="empty"><div class="title">No bookings found</div><div class="sub">Create a new booking entry to begin.</div><button class="btn btn-primary" onclick="openBookingForm()">+ New Booking</button></div></td></tr>';
     renderBookingSummary([], 0, 0, 0);
     return;
   }
@@ -2666,7 +2773,6 @@ function renderBookings() {
       '<td>'+formatDMY(b.date)+'</td>' +
       '<td class="mono">'+escapeHtml(b.awb||'')+'</td>' +
       '<td>'+(c?escapeHtml(c.code+' — '+c.name):'<span style="color:var(--danger);">DELETED</span>')+'</td>' +
-      '<td>'+escapeHtml(b.consignee||'-')+'</td>' +
       '<td>'+escapeHtml(b.destination||'-')+'</td>' +
       '<td class="text-center">'+escapeHtml(b.mode||'-')+'</td>' +
       '<td class="text-right num">'+(b.weight||0)+'</td>' +
@@ -2735,7 +2841,7 @@ function openBookingForm() {
   document.getElementById('bk_deleteBtn').style.display = 'none';
   refreshCompanyDropdowns();
   document.getElementById('bk_date').value = todayStr();
-  ['bk_awb','bk_destination','bk_consignee','bk_weight','bk_amount'].forEach(id => document.getElementById(id).value = '');
+  ['bk_awb','bk_destination','bk_weight','bk_amount'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('bk_company').value = '';
   document.getElementById('bk_mode').value = '';
   document.getElementById('bk_rateDisplay').textContent = '--';
@@ -2753,7 +2859,6 @@ function openEditBooking(id) {
   document.getElementById('bk_date').value = b.date || todayStr();
   document.getElementById('bk_awb').value = b.awb || '';
   document.getElementById('bk_destination').value = b.destination || '';
-  document.getElementById('bk_consignee').value = b.consignee || '';
   document.getElementById('bk_mode').value = b.mode || '';
   document.getElementById('bk_weight').value = b.weight || '';
   document.getElementById('bk_amount').value = b.amount || '';
@@ -2786,7 +2891,7 @@ function saveBooking() {
     billingRowsCache = [];
     billingSelectedIds = new Set();
     document.getElementById('billSummaryBar').style.display = 'none';
-    document.getElementById('billingBody').innerHTML = '<tr><td colspan="11" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>';
+    document.getElementById('billingBody').innerHTML = '<tr><td colspan="10" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>';
     return;
   }
   if (!date) { alert('Date required'); return; }
@@ -2804,7 +2909,7 @@ function saveBooking() {
     id: editId || uid(),
     companyCode: code, date, awb,
     destination: document.getElementById('bk_destination').value.trim().toUpperCase(),
-    consignee: document.getElementById('bk_consignee').value.trim().toUpperCase(),
+    consignee: '',
     mode,
     weight: parseFloat(weight) || 0,
     amount: parseFloat(amount) || 0,
@@ -2813,11 +2918,19 @@ function saveBooking() {
   if (editId) {
     const idx = data.bookings.findIndex(b => b.id === editId);
     if (idx >= 0) { obj.billNo = data.bookings[idx].billNo || ''; data.bookings[idx] = obj; }
+    save(); closeModal('bookingModal'); renderBookings();
+    toast('Booking updated');
   } else {
     data.bookings.push(obj);
+    save(); renderBookings(); renderDashboard();
+    toast('Booking saved — add next entry');
+    document.getElementById('bk_editId').value = '';
+    document.getElementById('bk_deleteBtn').style.display = 'none';
+    document.getElementById('bookingModalTitle').textContent = 'New Booking Entry';
+    ['bk_awb','bk_destination','bk_weight','bk_amount'].forEach(id => document.getElementById(id).value = '');
+    recalcAmount();
+    setTimeout(() => document.getElementById('bk_awb').focus(), 50);
   }
-  save(); closeModal('bookingModal'); renderBookings();
-  toast('Booking ' + (editId?'updated':'saved'));
 }
 
 function deleteBooking(id) {
@@ -2840,12 +2953,12 @@ function deleteBookingFromModal() {
 
 function exportBookingsExcel() {
   const rows = getFilteredBookings();
-  const headers = ['Date','AWB/POD','Party Code','Party Name','Consignee','Destination','Mode','Weight','Rate','Amount','Bill No'];
+  const headers = ['Date','AWB/POD','Party Code','Party Name','Destination','Mode','Weight','Rate','Amount','Bill No'];
   const csv = [['NISARG ENTERPRISE - Bookings'],['Exported: '+formatDMY(todayStr())],[],headers];
   rows.forEach(b => {
     const c = getCompany(b.companyCode);
     const rate = c && b.mode ? (c.rates[b.mode]||0) : 0;
-    csv.push([formatDMY(b.date), b.awb, b.companyCode, c?c.name:'', b.consignee, b.destination, b.mode, b.weight, rate, b.amount, b.billNo||'Unbilled']);
+    csv.push([formatDMY(b.date), b.awb, b.companyCode, c?c.name:'', b.destination, b.mode, b.weight, rate, b.amount, b.billNo||'Unbilled']);
   });
   const csvStr = csv.map(r => r.map(c => '"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n');
   const blob = new Blob(['\uFEFF'+csvStr], {type:'text/csv;charset=utf-8;'});
@@ -2853,6 +2966,52 @@ function exportBookingsExcel() {
   const a = document.createElement('a'); a.href = url; a.download = 'bookings_'+todayStr()+'.csv'; a.click();
   URL.revokeObjectURL(url);
 }
+
+function downloadImportTemplate() {
+  const headers = ['Date','AWB/POD','Party Code','Party Name','Destination','Mode','Weight','Amount (Optional - Auto)'];
+  const sample = [formatDMY(todayStr()), 'D1234567890', (data.companies[0]?.code || 'R001'), (data.companies[0]?.name || 'RONAK ELECTRIC CO'), 'MUMBAI', 'BY AIR', '2.500', ''];
+  const csv = [headers, sample].map(r => r.map(c => '"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'booking_import_format.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+function parseCSVText(text) {
+  text = text.replace(/^\uFEFF/, ''); const rows=[]; let row=[], cur='', inQ=false;
+  for (let i=0;i<text.length;i++){ const ch=text[i], next=text[i+1]; if(ch==='"'){ if(inQ&&next==='"'){cur+='"';i++;} else inQ=!inQ; } else if(ch===','&&!inQ){ row.push(cur); cur=''; } else if((ch==='\n'||ch==='\r')&&!inQ){ if(ch==='\r'&&next==='\n') i++; row.push(cur); cur=''; if(row.some(v=>String(v).trim()!=='')) rows.push(row); row=[]; } else cur+=ch; }
+  row.push(cur); if(row.some(v=>String(v).trim()!=='')) rows.push(row); return rows;
+}
+function normalizeImportHeader(h) { return String(h||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function parseImportDate(v) { v=String(v||'').trim(); if(!v) return ''; if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; const m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/); if(m){let d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3]; if(y.length===2)y='20'+y; return y+'-'+mo+'-'+d;} const dt=new Date(v); return isNaN(dt)?'':dt.toISOString().slice(0,10); }
+function importBookingsCSV(ev) {
+  const file = ev.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const rows = parseCSVText(e.target.result); if (rows.length < 2) throw new Error('CSV empty hai. Import Format download karke same headers use karo.');
+      let headerIndex = rows.findIndex(r => r.map(normalizeImportHeader).some(h => ['awbpod','awb','podawb'].includes(h))); if (headerIndex < 0) headerIndex = 0;
+      const headers = rows[headerIndex].map(normalizeImportHeader);
+      function val(r,names){ for(const n of names){ const idx=headers.indexOf(n); if(idx>=0) return (r[idx]||'').trim(); } return ''; }
+      const existingAwb = new Set((data.bookings||[]).map(b => String(b.awb||'').toUpperCase()));
+      const toAdd=[]; const missingCompanies=new Set(); let duplicate=0, invalid=0;
+      for(let i=headerIndex+1;i<rows.length;i++){
+        const r=rows[i]; const awb=val(r,['awbpod','podawb','awb','podno','pod']).toUpperCase(); if(!awb){invalid++; continue;} if(existingAwb.has(awb)){duplicate++; continue;}
+        const partyCode=val(r,['partycode','companycode','code']).toUpperCase(); const partyName=val(r,['partyname','companyname','party','company']).toUpperCase();
+        let comp=partyCode?getCompany(partyCode):null; if(!comp&&partyName) comp=(data.companies||[]).find(c=>String(c.name||'').toUpperCase()===partyName);
+        if(!comp){missingCompanies.add(partyCode||partyName||'(blank party)'); invalid++; continue;}
+        const date=parseImportDate(val(r,['date','bookingdate']))||todayStr(); let mode=val(r,['mode','service']).toUpperCase(); if(!['BY AIR','BY SEA','BY ROAD'].includes(mode)) mode='BY ROAD';
+        const weight=parseFloat(String(val(r,['weight','wt','wtkg','weightkg'])).replace(/,/g,''))||0; const rateForMode=(comp.rates&&comp.rates[mode])||0;
+        const amountRaw=String(val(r,['amount','amountoptionalauto','netamount','netamt','amt'])).replace(/,/g,'').trim(); let amount=amountRaw?parseFloat(amountRaw):NaN; if(!Number.isFinite(amount)||amount<=0) amount=weight*rateForMode;
+        toAdd.push({id:uid(),companyCode:comp.code,date,awb,destination:val(r,['destination','dest','city']).toUpperCase(),consignee:'',mode,weight,amount:parseFloat(amount||0),billNo:''}); existingAwb.add(awb);
+      }
+      if(!toAdd.length){ alert('No bookings imported. Duplicate: '+duplicate+', Invalid/Missing company: '+invalid+'\nMissing: '+Array.from(missingCompanies).slice(0,5).join(', ')); return; }
+      if(!confirm('Import '+toAdd.length+' bookings?\nDuplicate skipped: '+duplicate+'\nInvalid/Missing company skipped: '+invalid+(missingCompanies.size?'\nMissing companies: '+Array.from(missingCompanies).slice(0,5).join(', '):''))) return;
+      createSafetySnapshot('before_booking_import'); data.bookings.push(...toAdd); save(); bookingCurrentPage=1; renderBookings(); renderDashboard(); toast('Imported '+toAdd.length+' bookings');
+    } catch(err) { alert('Import failed: '+err.message); }
+  };
+  reader.readAsText(file); ev.target.value='';
+}
+
 
 /* ============================================
    BILLING
@@ -2930,7 +3089,7 @@ function loadBillingEntries(silent) {
 function renderBillingRows(rows) {
   const tbody = document.getElementById('billingBody');
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:40px; color:var(--gray-600);">No bookings found for this party in selected date range.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:40px; color:var(--gray-600);">No bookings found for this party in selected date range.</td></tr>';
     document.getElementById('billSummaryBar').style.display = 'none';
     return;
   }
@@ -2948,7 +3107,6 @@ function renderBillingRows(rows) {
       '<td class="row-num">'+(startIndex+i+1)+'</td>' +
       '<td>'+formatDMY(b.date)+'</td>' +
       '<td class="mono">'+escapeHtml(b.awb||'')+'</td>' +
-      '<td>'+escapeHtml(b.consignee||'-')+'</td>' +
       '<td>'+escapeHtml(b.destination||'-')+'</td>' +
       '<td class="text-center">'+escapeHtml(b.mode||'-')+'</td>' +
       '<td class="text-right num">'+(b.weight||0)+'</td>' +
@@ -3043,6 +3201,88 @@ function generateFinalBill() {
   loadBillingEntries();
   toast('Bill generated: ' + billNo);
 }
+
+/* ============================================
+   LEDGER REPORT
+============================================ */
+function setLedgerMonth() {
+  const today = new Date();
+  const from = new Date(today.getFullYear(), today.getMonth(), 1);
+  document.getElementById('ledgerFrom').value = dateISO(from);
+  document.getElementById('ledgerTo').value = dateISO(today);
+  renderLedgerReport();
+}
+function initLedgerPanel() { if (!document.getElementById('ledgerFrom').value && !document.getElementById('ledgerTo').value) setLedgerMonth(); }
+function getLedgerRows() {
+  const code = document.getElementById('ledgerCompany')?.value || '';
+  const from = document.getElementById('ledgerFrom')?.value || '';
+  const to = document.getElementById('ledgerTo')?.value || '';
+  if (!code) return { company:null, rows:[], opening:0, closing:0 };
+  const company = getCompany(code);
+  const bills = (data.bills || []).filter(b => b.companyCode === code);
+  const payments = (data.payments || []).filter(p => p.companyCode === code);
+  const openingDebit = bills.filter(b => from && b.date < from).reduce((s,b)=>s+(parseFloat(b.total)||0),0);
+  const openingCredit = payments.filter(p => from && p.date < from).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+  const opening = openingDebit - openingCredit;
+  const events = [];
+  bills.forEach(b => { if (from && b.date < from) return; if (to && b.date > to) return; events.push({ type:'bill', date:b.date, particulars:'Tax Invoice', voucher:b.billNo||'', debit:parseFloat(b.total)||0, credit:0, entries:(b.bookingIds||[]).length, id:b.billNo||'' }); });
+  payments.forEach(p => { if (from && p.date < from) return; if (to && p.date > to) return; const mode=p.mode?' - '+p.mode:''; events.push({ type:'payment', date:p.date, particulars:'Payment Received'+mode, voucher:p.refNo||p.remarks||'', debit:0, credit:parseFloat(p.amount)||0, entries:0, id:p.id }); });
+  events.sort((a,b)=>(a.date||'').localeCompare(b.date||'') || (a.type === 'bill' ? -1 : 1));
+  let balance = opening;
+  const rows = events.map(e => { balance += (e.debit||0) - (e.credit||0); return { ...e, balance }; });
+  return { company, rows, opening, closing:balance };
+}
+function renderLedgerReport() {
+  const body = document.getElementById('ledgerReportBody'); if (!body) return;
+  const { company, rows, opening, closing } = getLedgerRows();
+  const title = document.getElementById('ledgerTitle'); const summary = document.getElementById('ledgerSummaryBar');
+  if (!company) { if (title) title.textContent='Party Ledger'; body.innerHTML='<tr><td colspan="6" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view ledger.</td></tr>'; if(summary) summary.style.display='none'; return; }
+  if (title) title.textContent='Ledger - '+company.name;
+  let html='', totalDebit=0, totalCredit=0;
+  html += '<tr><td></td><td><strong>Opening Balance</strong></td><td></td><td class="text-right"></td><td class="text-right"></td><td class="text-right num"><strong>₹ '+fmtAmount(opening)+'</strong></td></tr>';
+  rows.forEach(r => { totalDebit+=r.debit; totalCredit+=r.credit; const delBtn=r.type==='payment'?' <button class="btn btn-sm btn-danger" onclick="deleteCreditPayment(\''+r.id+'\')">Del</button>':''; html += '<tr><td>'+formatDMY(r.date)+'</td><td>'+escapeHtml(r.particulars)+(r.type==='bill'?' <span style="color:var(--gray-600);">('+r.entries+' entries)</span>':'')+delBtn+'</td><td class="mono">'+escapeHtml(r.voucher)+'</td><td class="text-right num">'+(r.debit?'₹ '+fmtAmount(r.debit):'')+'</td><td class="text-right num">'+(r.credit?'₹ '+fmtAmount(r.credit):'')+'</td><td class="text-right num"><strong>₹ '+fmtAmount(r.balance)+'</strong></td></tr>'; });
+  html += '<tr style="background:var(--navy-50);"><td></td><td><strong>Closing Balance</strong></td><td></td><td class="text-right num"><strong>₹ '+fmtAmount(totalDebit)+'</strong></td><td class="text-right num"><strong>₹ '+fmtAmount(totalCredit)+'</strong></td><td class="text-right num"><strong>₹ '+fmtAmount(closing)+'</strong></td></tr>';
+  body.innerHTML=html;
+  if (summary) { summary.style.display='flex'; summary.innerHTML='<strong>'+escapeHtml(company.name)+'</strong> &middot; Transactions: '+rows.length+' &middot; Debit: <strong>₹ '+fmtAmount(totalDebit)+'</strong> &middot; Credit: <strong>₹ '+fmtAmount(totalCredit)+'</strong> &middot; Closing: <strong>₹ '+fmtAmount(closing)+'</strong>'; }
+}
+function openCreditPaymentForm() {
+  const sel=document.getElementById('ledgerCompany'); refreshCompanyDropdowns(); const paySel=document.getElementById('pay_company');
+  if (paySel) { paySel.innerHTML='<option value="">-- Select Party --</option>'+data.companies.map(c=>'<option value="'+escapeHtml(c.code)+'">'+escapeHtml(c.code+' — '+escapeHtml(c.name))+'</option>').join(''); paySel.value=sel?.value||''; }
+  document.getElementById('pay_editId').value=''; document.getElementById('pay_date').value=todayStr(); document.getElementById('pay_amount').value=''; document.getElementById('pay_mode').value='Cash'; document.getElementById('pay_ref').value=''; document.getElementById('pay_remarks').value=''; document.getElementById('creditPaymentModal').classList.add('show');
+}
+function saveCreditPayment() {
+  const companyCode=document.getElementById('pay_company').value; const date=document.getElementById('pay_date').value; const amount=parseFloat(document.getElementById('pay_amount').value)||0;
+  if(!companyCode) return alert('Select party'); if(!date) return alert('Date required'); if(amount<=0) return alert('Amount required');
+  data.payments=data.payments||[]; data.payments.push({id:uid(),companyCode,date,amount,mode:document.getElementById('pay_mode').value,refNo:document.getElementById('pay_ref').value.trim(),remarks:document.getElementById('pay_remarks').value.trim(),createdAt:Date.now()});
+  save(); closeModal('creditPaymentModal'); if(document.getElementById('ledgerCompany')) document.getElementById('ledgerCompany').value=companyCode; renderLedgerReport(); toast('Credit/payment saved');
+}
+function deleteCreditPayment(id) { if(!confirm('Delete this credit/payment entry?')) return; createSafetySnapshot('before_credit_delete_'+id); data.payments=(data.payments||[]).filter(p=>p.id!==id); data.deletedPaymentIds=data.deletedPaymentIds||{}; data.deletedPaymentIds[id]=Date.now(); save(); renderLedgerReport(); toast('Credit/payment deleted'); }
+function exportLedgerReportExcel() {
+  const { company, rows, opening, closing } = getLedgerRows(); if(!company) return alert('Select party first');
+  const csv=[['Ledger - '+company.name],['GSTIN',company.gst||''],[],['Date','Particulars','Voucher / Bill No.','Debit','Credit','Balance']]; csv.push(['','Opening Balance','','','',opening]); rows.forEach(r=>csv.push([formatDMY(r.date),r.particulars+(r.type==='bill'?' ('+r.entries+' entries)':''),r.voucher,r.debit||'',r.credit||'',r.balance])); csv.push(['','Closing Balance','',rows.reduce((s,r)=>s+r.debit,0),rows.reduce((s,r)=>s+r.credit,0),closing]);
+  const csvStr=csv.map(r=>r.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n'); const blob=new Blob(['\uFEFF'+csvStr],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ledger_'+safeFileName(company.name)+'_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(url);
+}
+function printLedgerReport() {
+  const { company, rows, opening, closing } = getLedgerRows(); if(!company) return alert('Select party first'); const totalDebit=rows.reduce((s,r)=>s+r.debit,0), totalCredit=rows.reduce((s,r)=>s+r.credit,0);
+  const trs=rows.map(r=>'<tr><td>'+formatDMY(r.date)+'</td><td>'+escapeHtml(r.particulars)+(r.type==='bill'?' ('+r.entries+' entries)':'')+'</td><td>'+escapeHtml(r.voucher)+'</td><td class="r">'+(r.debit?fmtAmount(r.debit):'')+'</td><td class="r">'+(r.credit?fmtAmount(r.credit):'')+'</td><td class="r">'+fmtAmount(r.balance)+'</td></tr>').join(''); const w=window.open('','_blank','width=1000,height=800'); if(!w)return alert('Allow pop-ups');
+  w.document.write('<html><head><title>Ledger '+escapeHtml(company.name)+'</title><style>body{font-family:Arial;padding:20px;color:#000}h2{margin:0;color:#0a1f3d}.sub{font-size:12px;margin:6px 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#0a1f3d;color:#fff;padding:7px;border:1px solid #0a1f3d;text-align:left}td{padding:6px;border:1px solid #999}.r{text-align:right}.tot{background:#eef3fb;font-weight:bold}@media print{@page{size:A4;margin:10mm}}</style></head><body><h2>'+escapeHtml(company.name)+'</h2><div class="sub">Ledger Statement &nbsp; GSTIN: '+escapeHtml(company.gst||'-')+'</div><table><thead><tr><th>Date</th><th>Particulars</th><th>Voucher / Bill No.</th><th>Debit</th><th>Credit</th><th>Balance</th></tr></thead><tbody><tr><td></td><td><b>Opening Balance</b></td><td></td><td></td><td></td><td class="r"><b>'+fmtAmount(opening)+'</b></td></tr>'+trs+'<tr class="tot"><td></td><td>Closing Balance</td><td></td><td class="r">'+fmtAmount(totalDebit)+'</td><td class="r">'+fmtAmount(totalCredit)+'</td><td class="r">'+fmtAmount(closing)+'</td></tr></tbody></table><script>window.onload=function(){window.print();};<\/script></body></html>'); w.document.close();
+}
+
+/* ============================================
+   GST REPORT
+============================================ */
+function setGSTReportMonth() { const today=new Date(); const from=new Date(today.getFullYear(), today.getMonth(), 1); document.getElementById('gstFrom').value=dateISO(from); document.getElementById('gstTo').value=dateISO(today); renderGSTReport(); }
+function initGSTReportPanel() { if(!document.getElementById('gstFrom').value && !document.getElementById('gstTo').value) setGSTReportMonth(); }
+function formatGSTDate(iso) { if(!iso) return ''; const d=new Date(iso+'T00:00:00'); if(isNaN(d)) return formatDMY(iso); const mon=d.toLocaleString('en-US',{month:'short'}); return String(d.getDate()).padStart(2,'0')+'-'+mon+'-'+String(d.getFullYear()).slice(-2); }
+function gstPlaceOfSupply(company) { const st=String(company?.state||SENDER.state||'GUJARAT - 24').toUpperCase(); const codeMatch=st.match(/(\d{2})/); const code=codeMatch?codeMatch[1]:'24'; const name=st.replace(/\d+/g,'').replace(/[-–]/g,'').trim()||'GUJARAT'; return code+'-'+name; }
+function getGSTReportRows() {
+  const from=document.getElementById('gstFrom')?.value||'', to=document.getElementById('gstTo')?.value||'', companyCode=document.getElementById('gstCompany')?.value||'';
+  const bills=(data.bills||[]).filter(b=>!(from&&b.date<from)&&!(to&&b.date>to)&&!(companyCode&&b.companyCode!==companyCode)).sort((a,b)=>(a.date||'').localeCompare(b.date||'')||String(a.billNo||'').localeCompare(String(b.billNo||'')));
+  const grouped=new Map(); bills.forEach(b=>{ const key=b.companyCode||'UNKNOWN'; if(!grouped.has(key)) grouped.set(key,{companyCode:key,bills:[],invoiceNos:[],dates:[],invoiceValue:0,taxable:0,rateSet:new Set()}); const g=grouped.get(key); const taxable=parseFloat(b.subtotal)||0; const gstRate=b.applyGST===false?0:(parseFloat(b.gstRate)||18); const invoiceValue=parseFloat(b.total)||Math.round(taxable+(taxable*gstRate/100)); g.bills.push(b); g.invoiceNos.push(b.billNo||''); if(b.date) g.dates.push(b.date); g.invoiceValue+=invoiceValue; g.taxable+=taxable; g.rateSet.add(gstRate); });
+  return Array.from(grouped.values()).map(g=>{ const c=getCompany(g.companyCode)||{}; const sorted=g.dates.slice().sort(); const minDate=sorted[0]||'', maxDate=sorted[sorted.length-1]||''; const dateText=minDate&&maxDate&&minDate!==maxDate?formatGSTDate(minDate)+' to '+formatGSTDate(maxDate):formatGSTDate(minDate||maxDate); const nos=g.invoiceNos.filter(Boolean); const invoiceNoText=nos.length<=3?nos.join(', '):(nos[0]+' ... '+nos[nos.length-1]+' ('+nos.length+' Bills)'); const rates=Array.from(g.rateSet).sort((a,b)=>a-b); return {gstin:c.gst||'',receiver:c.name||g.companyCode||'',invoiceNo:invoiceNoText,invoiceDate:dateText,invoiceValue:g.invoiceValue,place:gstPlaceOfSupply(c),reverse:'N',applicable:'',invoiceType:'Regular B2B',ecommerce:'',rate:rates.length===1?rates[0]:rates.join('/'),taxable:g.taxable,cess:0,billCount:g.bills.length}; }).sort((a,b)=>String(a.receiver).localeCompare(String(b.receiver)));
+}
+function renderGSTReport() { const tbody=document.getElementById('gstReportBody'); if(!tbody)return; const rows=getGSTReportRows(); const summary=document.getElementById('gstSummaryBar'); if(!rows.length){ tbody.innerHTML='<tr><td colspan="13" style="text-align:center; padding:40px; color:var(--gray-600);">No GST report data found. Generate bills first.</td></tr>'; if(summary)summary.style.display='none'; return; } tbody.innerHTML=rows.map(r=>'<tr><td class="mono">'+escapeHtml(r.gstin)+'</td><td>'+escapeHtml(r.receiver)+'</td><td class="mono">'+escapeHtml(r.invoiceNo)+'</td><td>'+escapeHtml(r.invoiceDate)+'</td><td class="text-right num">'+fmtAmount(r.invoiceValue)+'</td><td>'+escapeHtml(r.place)+'</td><td class="text-center">'+r.reverse+'</td><td>'+escapeHtml(r.applicable)+'</td><td>'+escapeHtml(r.invoiceType)+'</td><td>'+escapeHtml(r.ecommerce)+'</td><td class="text-right num">'+(typeof r.rate==='number'?fmtAmount(r.rate).replace('.00',''):escapeHtml(r.rate))+'</td><td class="text-right num">'+fmtAmount(r.taxable)+'</td><td class="text-right num">'+(r.cess?fmtAmount(r.cess):'')+'</td></tr>').join(''); const totalInvoice=rows.reduce((s,r)=>s+r.invoiceValue,0), totalTaxable=rows.reduce((s,r)=>s+r.taxable,0); if(summary){ summary.style.display='flex'; summary.innerHTML='<strong>GST Summary:</strong> '+rows.length+' parties &middot; Invoice Value: <strong>₹ '+fmtAmount(totalInvoice)+'</strong> &middot; Taxable Value: <strong>₹ '+fmtAmount(totalTaxable)+'</strong>'; } }
+function exportGSTReportExcel() { const rows=getGSTReportRows(); if(!rows.length){alert('No GST report data to export');return;} const headers=['GSTIN/UIN of Recipient','Receiver Name','Invoice Number','Invoice date','Invoice Value','Place Of Supply','Reverse Charge','Applicable % of Tax Rate','Invoice Type','E-Commerce GSTIN','Rate','Taxable Value','Cess Amount']; const csv=[headers]; rows.forEach(r=>csv.push([r.gstin,r.receiver,r.invoiceNo,r.invoiceDate,r.invoiceValue,r.place,r.reverse,r.applicable,r.invoiceType,r.ecommerce,r.rate,r.taxable,r.cess||''])); const csvStr=csv.map(r=>r.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n'); const blob=new Blob(['\uFEFF'+csvStr],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='gst_report_'+todayStr()+'.csv'; a.click(); URL.revokeObjectURL(url); }
 
 /* ============================================
    BILL HISTORY
@@ -3601,9 +3841,9 @@ function csvEscape(v) {
 
 function makeBookingsCSV(rows, company) {
   const out = [];
-  out.push(['Date','AWB/POD','Party Code','Party Name','Consignee','Destination','Mode','Weight','Amount','Bill No'].map(csvEscape).join(','));
+  out.push(['Date','AWB/POD','Party Code','Party Name','Destination','Mode','Weight','Amount','Bill No'].map(csvEscape).join(','));
   rows.forEach(b => out.push([
-    formatDMY(b.date), b.awb, b.companyCode, company ? company.name : '', b.consignee, b.destination, b.mode, b.weight, b.amount, b.billNo || 'Unbilled'
+    formatDMY(b.date), b.awb, b.companyCode, company ? company.name : '', b.destination, b.mode, b.weight, b.amount, b.billNo || 'Unbilled'
   ].map(csvEscape).join(',')));
   return '\uFEFF' + out.join('\n');
 }
@@ -3816,5 +4056,6 @@ window.addEventListener('storage', e => {
 });
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a078ed791be0bff9',t:'MTc4MDc2NDc0Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
 </html>
