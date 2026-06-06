@@ -1200,6 +1200,7 @@
           <button class="btn btn-primary" onclick="selectOfflineBackupFolder()">Select Offline Backup Folder</button>
           <button class="btn btn-secondary" onclick="writeOfflineBackupFiles(true)">Save Now to Offline Folder</button>
           <button class="btn btn-primary" onclick="pushLocalDataAsFinalCloud()">Push This Data as Final Cloud</button>
+          <button class="btn btn-secondary" onclick="googleSignOut()">Google Sign Out</button>
           <button class="btn btn-secondary" onclick="resetBillNumberOwner()">Reset Bill Number</button>
           <button class="btn btn-danger" onclick="clearAllBillsOwner()">Clear All Bills</button>
           <button class="btn btn-danger" onclick="enableMaintenanceMode()">Maintenance ON</button>
@@ -1263,6 +1264,24 @@
       </div>
     </section>
   </main>
+</div>
+
+
+<!-- ============ MODAL: GOOGLE CLOUD ACCOUNT ============ -->
+<div class="modal-bg" id="googleAuthModal" style="z-index:110000;">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <h3>Google Cloud Account</h3>
+    </div>
+    <div class="modal-body">
+      <div class="info-bar" style="margin-bottom:14px;">
+        Google account se login karne par har user ka data alag save hoga. Data mix nahi hoga.
+      </div>
+      <button class="btn btn-primary" style="width:100%; justify-content:center; padding:12px 14px;" onclick="googleSignIn()">Continue with Google</button>
+      <button class="btn btn-secondary" style="width:100%; justify-content:center; padding:10px 14px; margin-top:10px;" onclick="continueOfflineAccount()">Use Offline / Local Only</button>
+      <div class="login-error" id="googleAuthError" style="display:none; margin-top:12px;">Google login failed</div>
+    </div>
+  </div>
 </div>
 
 <!-- ============ MODAL: COMPANY ============ -->
@@ -1506,6 +1525,7 @@
 
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <script>
 
@@ -1564,7 +1584,8 @@ async function doLogin() {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('loginUser').value = '';
     document.getElementById('loginPass').value = '';
-    toast('Logged in as ' + (currentUserRole === 'owner' ? 'OWNER' : 'USER'));
+    toast('Local login ok');
+    setTimeout(() => showGoogleAuthGate(), 100);
     return;
   }
   if (err) err.style.display = 'block';
@@ -1727,10 +1748,12 @@ const PAGE_META = {
 /* ============================================
    STORAGE & DATA
 ============================================ */
-const LS_KEY = 'nisargBillingData_final_v4';
+const LS_KEY_BASE = 'nisargBillingData_account_google_v1';
+let LS_KEY = LS_KEY_BASE + '_offline';
 const LS_FB_CFG = 'nisargFirebaseCfg';
 const LS_LAST_BACKUP = 'nisargLastBackup';
-const CLOUD_PATH = 'nisargBillingV4';
+const CLOUD_PATH_BASE = 'billingAccounts';
+const OWNER_GOOGLE_EMAIL = 'soniriyon94@gmail.com';
 const STARTER_DATA_VERSION = 'seed_5_companies_5000plus_bookings_v3';
 const APP_DATA_VERSION = 'FINAL_V4';
 const IDB_NAME = 'NisargBillingDB_v1';
@@ -2091,6 +2114,8 @@ function addBulkTestBookings(starter) {
   });
 }
 
+function createEmptyData() { return { companies: [], bookings: [], bills: [], payments: [], lastBillNum: 0, seedVersion: STARTER_DATA_VERSION, appVersion: APP_DATA_VERSION, updatedAt: Date.now() }; }
+
 let data = loadLocal();
 if (data && data.appVersion && data.appVersion !== APP_DATA_VERSION) data = null;
 if (!data || (((data.companies || []).length === 0) && ((data.bookings || []).length === 0))) {
@@ -2167,6 +2192,9 @@ function forceStarterDataIntoFile() {
 
 
 let db = null;
+let auth = null;
+let activeCloudUser = null;
+let cloudDataRef = null;
 let suppressNextCloudWrite = false;
 let billingRowsCache = [];
 let billingSelectedIds = new Set();
@@ -2356,40 +2384,113 @@ function mergeCloudData(localData, remoteData) {
   return { data: base, changed };
 }
 
-function initFirebase() {
+function initFirebaseAppOnly() {
   const cfgStr = localStorage.getItem(LS_FB_CFG);
-  if (!cfgStr) { setStatus('Offline (local only)', 'offline'); return; }
+  if (!cfgStr) { setStatus('Offline (local only)', 'offline'); return false; }
   try {
     const cfg = JSON.parse(cfgStr);
     if (!firebase.apps.length) firebase.initializeApp(cfg);
     db = firebase.database();
-    setStatus('Connecting…', 'syncing');
+    auth = firebase.auth();
     firebase.database().ref('.info/connected').on('value', snap => {
-      if (snap.val() === true) setStatus('Synced', 'online');
+      if (snap.val() === true) setStatus(activeCloudUser ? 'Synced' : 'Cloud ready', activeCloudUser ? 'online' : 'syncing');
       else setStatus('Offline (will sync)', 'offline');
     });
-    db.ref(CLOUD_PATH).on('value', snap => {
-      const remote = snap.val();
-      if (!remote) { cloudPush(); return; }
-      const merged = mergeCloudData(data, remote);
-      if (merged.changed) {
-        data = merged.data;
-        forceStarterDataIntoFile();
-        saveLocal();
-        renderAll();
-        setTimeout(() => cloudPush(), 900);
-        toast('Cloud data merged');
-      }
-    });
-  } catch(e) { setStatus('Cloud error', 'offline'); console.error(e); }
+    return true;
+  } catch(e) { setStatus('Cloud error', 'offline'); console.error(e); return false; }
 }
+
+function getCloudPath() {
+  return CLOUD_PATH_BASE + '/' + activeCloudUser.uid + '/appData';
+}
+
+function applyGoogleRole(user) {
+  const email = String(user?.email || '').toLowerCase();
+  currentLoginName = email || 'GOOGLE_USER';
+  currentUserRole = email === OWNER_GOOGLE_EMAIL.toLowerCase() ? 'owner' : 'user';
+  localStorage.setItem('nisargLastLoginRole', currentUserRole);
+  localStorage.setItem('nisargLastLoginAt', new Date().toLocaleString());
+  setupRoleUI();
+}
+
+function initFirebaseForCurrentUser() {
+  if (!db || !activeCloudUser) return;
+  if (cloudDataRef) cloudDataRef.off();
+  applyGoogleRole(activeCloudUser);
+  LS_KEY = LS_KEY_BASE + '_' + activeCloudUser.uid;
+  data = loadLocal() || createEmptyData();
+  renderAll();
+  cloudDataRef = db.ref(getCloudPath());
+  cloudDataRef.on('value', snap => {
+    const remote = snap.val();
+    if (!remote) { cloudPush(); return; }
+    const merged = mergeCloudData(data, remote);
+    if (merged.changed) {
+      data = merged.data;
+      saveLocal();
+      renderAll();
+      setTimeout(() => cloudPush(), 900);
+      toast('Google account data merged');
+    }
+  });
+  setStatus('Synced', 'online');
+  toast('Google account: ' + (activeCloudUser.email || 'signed in'));
+}
+
+function initFirebase() {
+  if (!initFirebaseAppOnly()) return;
+  if (auth && auth.currentUser) {
+    activeCloudUser = auth.currentUser;
+    initFirebaseForCurrentUser();
+  } else {
+    showGoogleAuthGate();
+  }
+}
+
 function cloudPush() {
-  if (!db) return;
+  if (!db || !activeCloudUser) return;
   if (suppressNextCloudWrite) { suppressNextCloudWrite = false; return; }
   setStatus('Syncing…', 'syncing');
-  db.ref(CLOUD_PATH).set(data)
+  db.ref(getCloudPath()).set(data)
     .then(() => setStatus('Synced', 'online'))
     .catch(err => { setStatus('Sync failed', 'offline'); console.error(err); });
+}
+
+function showGoogleAuthGate() {
+  if (!localStorage.getItem(LS_FB_CFG)) return;
+  if (!initFirebaseAppOnly()) return;
+  const modal = document.getElementById('googleAuthModal');
+  if (modal && !activeCloudUser) modal.classList.add('show');
+}
+function hideGoogleAuthGate() { document.getElementById('googleAuthModal')?.classList.remove('show'); }
+function showGoogleAuthError(msg) { const el = document.getElementById('googleAuthError'); if (el) { el.textContent = msg; el.style.display = 'block'; } }
+
+async function googleSignIn() {
+  try {
+    if (!auth && !initFirebaseAppOnly()) return;
+    const provider = new firebase.auth.GoogleAuthProvider();
+    const result = await auth.signInWithPopup(provider);
+    activeCloudUser = result.user;
+    hideGoogleAuthGate();
+    initFirebaseForCurrentUser();
+  } catch(err) {
+    showGoogleAuthError(err.message);
+  }
+}
+
+function continueOfflineAccount() {
+  activeCloudUser = null;
+  LS_KEY = LS_KEY_BASE + '_offline';
+  data = loadLocal() || createEmptyData();
+  saveLocal(); renderAll(); hideGoogleAuthGate(); setStatus('Offline account', 'offline');
+}
+
+function googleSignOut() {
+  if (auth) auth.signOut();
+  activeCloudUser = null;
+  if (cloudDataRef) cloudDataRef.off();
+  cloudDataRef = null;
+  showGoogleAuthGate();
 }
 
 function openSetup() { document.getElementById('setupScreen').style.display = 'block'; }
@@ -3810,13 +3911,13 @@ function resetPrintSettings() {
 
 function pushLocalDataAsFinalCloud() {
   if (currentUserRole !== 'owner') return alert('Owner login required');
-  if (!db) return alert('Firebase not connected. Please setup Firebase and wait for Synced status.');
+  if (!db || !activeCloudUser) return alert('Google cloud account login required.');
   if (!confirm('Current local data ko FINAL CLOUD DATA banana hai? Cloud data overwrite ho jayega.')) return;
   createSafetySnapshot('before_push_final_cloud');
   data.appVersion = (typeof APP_DATA_VERSION !== 'undefined') ? APP_DATA_VERSION : data.appVersion;
   data.updatedAt = Date.now();
   setStatus('Pushing final cloud…', 'syncing');
-  db.ref(CLOUD_PATH).set(data)
+  db.ref(getCloudPath()).set(data)
     .then(() => { saveLocal(); setStatus('Synced', 'online'); toast('Local data pushed as final cloud'); })
     .catch(err => { setStatus('Cloud push failed', 'offline'); alert('Cloud push failed: ' + err.message); logAppError('pushLocalDataAsFinalCloud', err); });
 }
@@ -4041,7 +4142,7 @@ initCredentials().then(() => {
   if (!localStorage.getItem(LS_FB_CFG)) {
     document.getElementById('setupScreen').style.display = 'block';
     setStatus('Offline', 'offline');
-  } else { initFirebase(); }
+  } else { initFirebaseAppOnly(); }
 });
 
 window.addEventListener('beforeunload', () => { saveLocal(); });
@@ -4056,6 +4157,6 @@ window.addEventListener('storage', e => {
 });
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a078ed791be0bff9',t:'MTc4MDc2NDc0Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a0797b528da5de58',t:'MTc4MDc3MDU1Nw=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
