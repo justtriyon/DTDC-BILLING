@@ -996,10 +996,10 @@
         <label>Search:</label>
         <input type="text" id="bookingSearch" class="form-control" style="flex:1; min-width:200px;" placeholder="AWB / destination..." oninput="bookingCurrentPage=1; renderBookings()"/>
         <span style="flex:1;"></span>
-        <button class="btn btn-secondary" onclick="exportBookingsExcel()">Export Excel</button>
+        <button class="btn btn-secondary" onclick="exportBookingsExcel()">Export CSV</button>
         <button class="btn btn-secondary" onclick="downloadImportTemplate()">Import Format</button>
         <button class="btn btn-primary" onclick="document.getElementById('bookingImportFile').click()">Import Excel/CSV</button>
-        <input type="file" id="bookingImportFile" accept=".csv,.txt" style="display:none;" onchange="importBookingsCSV(event)"/>
+        <input type="file" id="bookingImportFile" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importBookingsCSV(event)"/>
         <button class="btn btn-primary" onclick="openBookingForm()">+ New Booking</button>
       </div>
 
@@ -1591,6 +1591,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script>
 
@@ -2665,15 +2666,16 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sub
 function normalizeMode(mode) {
   const m = String(mode || '').toUpperCase();
   if (m.includes('AIR')) return 'AIR';
+  if (m.includes('SEA')) return 'SEA'; // preserve old SEA data; new UI only allows AIR/ROAD
   if (m.includes('ROAD')) return 'ROAD';
-  if (m.includes('SEA')) return 'ROAD';
   return m || 'ROAD';
 }
 function getCompanyRate(c, mode) {
   const m = normalizeMode(mode);
   if (!c || !c.rates) return 0;
   if (m === 'AIR') return parseFloat(c.rates.AIR ?? c.rates['BY AIR'] ?? 0) || 0;
-  if (m === 'ROAD') return parseFloat(c.rates.ROAD ?? c.rates['BY ROAD'] ?? c.rates['BY SEA'] ?? 0) || 0;
+  if (m === 'SEA') return parseFloat(c.rates.SEA ?? c.rates['BY SEA'] ?? c.rates.ROAD ?? c.rates['BY ROAD'] ?? 0) || 0;
+  if (m === 'ROAD') return parseFloat(c.rates.ROAD ?? c.rates['BY ROAD'] ?? 0) || 0;
   return parseFloat(c.rates[m] || 0) || 0;
 }
 function getFuelRate(c) { return parseFloat(c && c.fuelRate) || 0; }
@@ -3270,34 +3272,66 @@ function parseCSVText(text) {
   row.push(cur); if(row.some(v=>String(v).trim()!=='')) rows.push(row); return rows;
 }
 function normalizeImportHeader(h) { return String(h||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
-function parseImportDate(v) { v=String(v||'').trim(); if(!v) return ''; if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; const m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/); if(m){let d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3]; if(y.length===2)y='20'+y; return y+'-'+mo+'-'+d;} const dt=new Date(v); return isNaN(dt)?'':dt.toISOString().slice(0,10); }
+function parseImportDate(v) { if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return isNaN(d)?'':dateISO(d); } v=String(v||'').trim(); if(!v) return ''; if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; const m=v.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/); if(m){let d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3]; if(y.length===2)y='20'+y; return y+'-'+mo+'-'+d;} const dt=new Date(v); return isNaN(dt)?'':dateISO(dt); }
+function processBookingImportRows(rows) {
+  if (rows.length < 2) throw new Error('File empty hai. Import Format download karke same headers use karo.');
+  let headerIndex = rows.findIndex(r => r.map(normalizeImportHeader).some(h => ['awbpod','awb','podawb'].includes(h)));
+  if (headerIndex < 0) headerIndex = 0;
+  const headers = rows[headerIndex].map(normalizeImportHeader);
+  function val(r,names){ for(const n of names){ const idx=headers.indexOf(n); if(idx>=0) return (r[idx] == null ? '' : String(r[idx])).trim(); } return ''; }
+  const existingAwb = new Set((data.bookings||[]).map(b => String(b.awb||'').toUpperCase()));
+  const toAdd=[]; const missingCompanies=new Set(); let duplicate=0, invalid=0;
+  for(let i=headerIndex+1;i<rows.length;i++){
+    const r=rows[i];
+    const awb=val(r,['awbpod','podawb','awb','podno','pod']).toUpperCase();
+    if(!awb){invalid++; continue;}
+    if(existingAwb.has(awb)){duplicate++; continue;}
+    const partyCode=val(r,['partycode','companycode','code']).toUpperCase();
+    const partyName=val(r,['partyname','companyname','party','company']).toUpperCase();
+    let comp=partyCode?getCompany(partyCode):null;
+    if(!comp&&partyName) comp=(data.companies||[]).find(c=>String(c.name||'').toUpperCase()===partyName);
+    if(!comp){missingCompanies.add(partyCode||partyName||'(blank party)'); invalid++; continue;}
+    const date=parseImportDate(val(r,['date','bookingdate']))||todayStr();
+    let mode=val(r,['mode','service']).toUpperCase();
+    mode = normalizeMode(mode); if(!['AIR','ROAD','SEA'].includes(mode)) mode='ROAD';
+    const rawWeight=parseFloat(String(val(r,['weight','wt','wtkg','weightkg'])).replace(/,/g,''))||0;
+    const weight=rawWeight>0?Math.ceil(rawWeight):0;
+    const rateForMode=getCompanyRate(comp, mode);
+    const amountRaw=String(val(r,['amount','amountoptionalauto','netamount','netamt','amt'])).replace(/,/g,'').trim();
+    let amount=amountRaw?parseFloat(amountRaw):NaN;
+    if(!Number.isFinite(amount)||amount<=0) amount=weight*rateForMode;
+    toAdd.push({id:uid(),companyCode:comp.code,date,awb,destination:val(r,['destination','dest','city']).toUpperCase(),consignee:'',mode,weight,amount:parseFloat(amount||0),billNo:''});
+    existingAwb.add(awb);
+  }
+  if(!toAdd.length){ alert('No bookings imported. Duplicate: '+duplicate+', Invalid/Missing company: '+invalid+'\nMissing: '+Array.from(missingCompanies).slice(0,5).join(', ')); return; }
+  if(!confirm('Import '+toAdd.length+' bookings?\nDuplicate skipped: '+duplicate+'\nInvalid/Missing company skipped: '+invalid+(missingCompanies.size?'\nMissing companies: '+Array.from(missingCompanies).slice(0,5).join(', '):''))) return;
+  createSafetySnapshot('before_booking_import');
+  data.bookings.push(...toAdd);
+  save(); bookingCurrentPage=1; renderBookings(); renderDashboard();
+  toast('Imported '+toAdd.length+' bookings');
+}
+
 function importBookingsCSV(ev) {
   const file = ev.target.files[0]; if (!file) return;
+  const name = (file.name || '').toLowerCase();
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const rows = parseCSVText(e.target.result); if (rows.length < 2) throw new Error('CSV empty hai. Import Format download karke same headers use karo.');
-      let headerIndex = rows.findIndex(r => r.map(normalizeImportHeader).some(h => ['awbpod','awb','podawb'].includes(h))); if (headerIndex < 0) headerIndex = 0;
-      const headers = rows[headerIndex].map(normalizeImportHeader);
-      function val(r,names){ for(const n of names){ const idx=headers.indexOf(n); if(idx>=0) return (r[idx]||'').trim(); } return ''; }
-      const existingAwb = new Set((data.bookings||[]).map(b => String(b.awb||'').toUpperCase()));
-      const toAdd=[]; const missingCompanies=new Set(); let duplicate=0, invalid=0;
-      for(let i=headerIndex+1;i<rows.length;i++){
-        const r=rows[i]; const awb=val(r,['awbpod','podawb','awb','podno','pod']).toUpperCase(); if(!awb){invalid++; continue;} if(existingAwb.has(awb)){duplicate++; continue;}
-        const partyCode=val(r,['partycode','companycode','code']).toUpperCase(); const partyName=val(r,['partyname','companyname','party','company']).toUpperCase();
-        let comp=partyCode?getCompany(partyCode):null; if(!comp&&partyName) comp=(data.companies||[]).find(c=>String(c.name||'').toUpperCase()===partyName);
-        if(!comp){missingCompanies.add(partyCode||partyName||'(blank party)'); invalid++; continue;}
-        const date=parseImportDate(val(r,['date','bookingdate']))||todayStr(); let mode=val(r,['mode','service']).toUpperCase(); mode = normalizeMode(mode); if(!['AIR','ROAD'].includes(mode)) mode='ROAD';
-        const rawWeight=parseFloat(String(val(r,['weight','wt','wtkg','weightkg'])).replace(/,/g,''))||0; const weight=rawWeight>0?Math.ceil(rawWeight):0; const rateForMode=getCompanyRate(comp, mode);
-        const amountRaw=String(val(r,['amount','amountoptionalauto','netamount','netamt','amt'])).replace(/,/g,'').trim(); let amount=amountRaw?parseFloat(amountRaw):NaN; if(!Number.isFinite(amount)||amount<=0) amount=weight*rateForMode;
-        toAdd.push({id:uid(),companyCode:comp.code,date,awb,destination:val(r,['destination','dest','city']).toUpperCase(),consignee:'',mode,weight,amount:parseFloat(amount||0),billNo:''}); existingAwb.add(awb);
+      let rows;
+      if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        if (typeof XLSX === 'undefined') throw new Error('Excel reader load nahi hua. Internet check karo ya file CSV me import karo.');
+        const wb = XLSX.read(new Uint8Array(e.target.result), {type:'array', cellDates:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:''});
+      } else {
+        rows = parseCSVText(e.target.result);
       }
-      if(!toAdd.length){ alert('No bookings imported. Duplicate: '+duplicate+', Invalid/Missing company: '+invalid+'\nMissing: '+Array.from(missingCompanies).slice(0,5).join(', ')); return; }
-      if(!confirm('Import '+toAdd.length+' bookings?\nDuplicate skipped: '+duplicate+'\nInvalid/Missing company skipped: '+invalid+(missingCompanies.size?'\nMissing companies: '+Array.from(missingCompanies).slice(0,5).join(', '):''))) return;
-      createSafetySnapshot('before_booking_import'); data.bookings.push(...toAdd); save(); bookingCurrentPage=1; renderBookings(); renderDashboard(); toast('Imported '+toAdd.length+' bookings');
+      processBookingImportRows(rows);
     } catch(err) { alert('Import failed: '+err.message); }
   };
-  reader.readAsText(file); ev.target.value='';
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) reader.readAsArrayBuffer(file);
+  else reader.readAsText(file);
+  ev.target.value='';
 }
 
 
@@ -3360,7 +3394,17 @@ function loadBillingEntries(silent) {
   const code = document.getElementById('billCompany').value;
   const from = document.getElementById('billFrom').value;
   const to = document.getElementById('billTo').value;
-  if (!code) { alert('Select party'); return; }
+  if (!code) {
+    if (!silent) alert('Select party');
+    billingRowsCache = [];
+    billingSelectedIds = new Set();
+    billingCurrentPage = 1;
+    const bar = document.getElementById('billSummaryBar');
+    if (bar) bar.style.display = 'none';
+    const tbody = document.getElementById('billingBody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:40px; color:var(--gray-600);">Select party to view entries automatically.</td></tr>';
+    return;
+  }
   const rows = data.bookings.filter(b => {
     if (b.companyCode !== code) return false;
     if (from && b.date < from) return false;
@@ -3634,8 +3678,15 @@ function renderLedgerReport() {
   if (summary) { summary.style.display='flex'; summary.innerHTML='<strong>'+escapeHtml(company.name)+'</strong> &middot; Transactions: '+rows.length+' &middot; Debit: <strong>₹ '+fmtAmount(totalDebit)+'</strong> &middot; Credit: <strong>₹ '+fmtAmount(totalCredit)+'</strong> &middot; Closing: <strong>₹ '+fmtAmount(closing)+'</strong>'; }
 }
 function openCreditPaymentForm() {
-  const sel=document.getElementById('ledgerCompany'); refreshCompanyDropdowns(); const paySel=document.getElementById('pay_company');
-  if (paySel) { paySel.innerHTML='<option value="">-- Select Party --</option>'+data.companies.map(c=>'<option value="'+escapeHtml(c.code)+'">'+escapeHtml(c.code+' — '+escapeHtml(c.name))+'</option>').join(''); paySel.value=sel?.value||''; }
+  const sel = document.getElementById('ledgerCompany');
+  refreshCompanyDropdowns();
+  const paySel = document.getElementById('pay_company');
+  if (paySel) {
+    paySel.innerHTML = '';
+    paySel.appendChild(new Option('-- Select Party --', ''));
+    data.companies.forEach(c => paySel.appendChild(new Option((c.code || '') + ' — ' + (c.name || ''), c.code || '')));
+    paySel.value = sel?.value || '';
+  }
   document.getElementById('pay_editId').value=''; document.getElementById('pay_date').value=todayStr(); document.getElementById('pay_amount').value=''; document.getElementById('pay_mode').value='Cash'; document.getElementById('pay_ref').value=''; document.getElementById('pay_remarks').value=''; document.getElementById('creditPaymentModal').classList.add('show');
 }
 function saveCreditPayment() {
@@ -4564,5 +4615,5 @@ window.addEventListener('storage', e => {
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a089ff80689b8875',t:'MTc4MDk0Mzc0NA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
