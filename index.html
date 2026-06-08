@@ -2230,7 +2230,7 @@ function createEmptyData() { return { companies: [], bookings: [], bills: [], pa
 let data = loadLocal();
 if (data && data.appVersion && data.appVersion !== APP_DATA_VERSION) data = null;
 if (!data || (((data.companies || []).length === 0) && ((data.bookings || []).length === 0))) {
-  data = createStarterData();
+  data = createEmptyData();
 }
 forceStarterDataIntoFile();
 
@@ -2290,17 +2290,15 @@ function mergeStarterDataIfMissing() {
 
 
 function forceStarterDataIntoFile() {
-  // Heavy seed merge runs only once per seed version, so regular user use stays fast.
+  // Production mode: do not auto-insert demo/test seed data into real user accounts.
   if (!data) return false;
   if (data.removedTestBulkAt && Array.isArray(data.bookings)) {
     const before = data.bookings.length;
     data.bookings = data.bookings.filter(b => !isTestBulkBooking(b));
     if (data.bookings.length !== before) saveLocal();
   }
-  if (data.seedVersion === STARTER_DATA_VERSION) return false;
-  return mergeStarterDataIfMissing();
+  return false;
 }
-
 
 let db = null;
 let auth = null;
@@ -2313,6 +2311,7 @@ let suppressNextCloudWrite = false;
 let billingRowsCache = [];
 let billingSelectedIds = new Set();
 const BOOKING_PAGE_SIZE = 40;
+const BOOKING_DISPLAY_SOFT_LIMIT = 1000;
 const BILLING_PAGE_SIZE = 40;
 let bookingCurrentPage = 1;
 let billingCurrentPage = 1;
@@ -2415,8 +2414,12 @@ function mergeCloudData(localData, remoteData) {
   base.deletedBillNos = { ...(other.deletedBillNos || {}), ...(base.deletedBillNos || {}) };
   base.deletedPaymentIds = { ...(other.deletedPaymentIds || {}), ...(base.deletedPaymentIds || {}) };
   base.revivedCompanyCodes = { ...(other.revivedCompanyCodes || {}), ...(base.revivedCompanyCodes || {}) };
+  base.revivedBookingIds = { ...(other.revivedBookingIds || {}), ...(base.revivedBookingIds || {}) };
   Object.keys(base.revivedCompanyCodes || {}).forEach(code => {
     if ((base.revivedCompanyCodes[code] || 0) >= (base.deletedCompanyCodes[code] || 0)) delete base.deletedCompanyCodes[code];
+  });
+  Object.keys(base.revivedBookingIds || {}).forEach(id => {
+    if ((base.revivedBookingIds[id] || 0) >= (base.deletedBookingIds[id] || 0)) delete base.deletedBookingIds[id];
   });
 
   const deletedCompanySet = new Set(Object.keys(base.deletedCompanyCodes || {}));
@@ -2991,11 +2994,11 @@ function refreshCompanyDropdowns() {
 /* ============================================
    BOOKINGS
 ============================================ */
-function getFilteredBookings() {
+function getFilteredBookings(limitForDisplay = true) {
   const fCompany = document.getElementById('filterCompany').value;
   const fDate = document.getElementById('filterDate').value;
   const search = (document.getElementById('bookingSearch').value || '').toLowerCase().trim();
-  return data.bookings.filter(b => {
+  let rows = data.bookings.filter(b => {
     if (fCompany && b.companyCode !== fCompany) return false;
     if (fDate && b.date !== fDate) return false;
     if (search) {
@@ -3005,11 +3008,19 @@ function getFilteredBookings() {
     }
     return true;
   }).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+
+  // Performance protection: without any filter, do not render tens of thousands of rows at once.
+  // Use company/date/search filters or export for full data.
+  if (limitForDisplay && !fCompany && !fDate && !search && rows.length > BOOKING_DISPLAY_SOFT_LIMIT) {
+    rows = rows.slice(0, BOOKING_DISPLAY_SOFT_LIMIT);
+    rows._limited = true;
+  }
+  return rows;
 }
 
 function renderBookings() {
   const tbody = document.getElementById('bookingsBody');
-  const filtered = getFilteredBookings();
+  const filtered = getFilteredBookings(true);
   if (filtered.length === 0) {
     tbody.innerHTML = '<tr><td colspan="11"><div class="empty"><div class="title">No bookings found</div><div class="sub">Create a new booking entry to begin.</div><button class="btn btn-primary" onclick="openBookingForm()">+ New Booking</button></div></td></tr>';
     renderBookingSummary([], 0, 0, 0);
@@ -3080,6 +3091,7 @@ function renderBookingSummary(rows, showingFrom, showingTo, totalPages) {
     '<div><strong>Amount:</strong> &#8377; '+fmtAmount(totalAmt)+'</div>' +
     '<div><span class="badge badge-warning">Unbilled: '+unbilled+'</span></div>' +
     '<div><span class="badge badge-secondary">Billed: '+billed+'</span></div>' +
+    (rows._limited ? '<div><span class="badge badge-warning">Showing latest '+BOOKING_DISPLAY_SOFT_LIMIT+' only - use filters for older data</span></div>' : '') +
     pagination;
 
   const prevBtn = document.getElementById('bookingPrevBtn');
@@ -3228,7 +3240,7 @@ function deleteBookingFromModal() {
 }
 
 function exportBookingsExcel() {
-  const rows = getFilteredBookings();
+  const rows = getFilteredBookings(false);
   const headers = ['Date','AWB/POD','Party Code','Party Name','Destination','Mode','Weight','Rate','Amount','Bill No'];
   const csv = [['NISARG ENTERPRISE - Bookings'],['Exported: '+formatDMY(todayStr())],[],headers];
   rows.forEach(b => {
@@ -4477,6 +4489,13 @@ function restoreCompanyBackup(company, bookings) {
   const existing = data.companies.find(c => c.code === code || String(c.name || '').toUpperCase() === name);
   const finalCode = existing ? existing.code : code;
   const restoredCompany = { ...company, code: finalCode };
+  const reviveAt = Date.now();
+  data.deletedCompanyCodes = data.deletedCompanyCodes || {};
+  data.revivedCompanyCodes = data.revivedCompanyCodes || {};
+  delete data.deletedCompanyCodes[finalCode];
+  data.revivedCompanyCodes[finalCode] = reviveAt;
+  data.deletedBookingIds = data.deletedBookingIds || {};
+  data.revivedBookingIds = data.revivedBookingIds || {};
 
   if (existing) {
     const idx = data.companies.findIndex(c => c.code === existing.code);
@@ -4491,6 +4510,8 @@ function restoreCompanyBackup(company, bookings) {
   bookings.forEach((b, i) => {
     const nb = { ...b, companyCode: finalCode };
     if (!nb.id) nb.id = uid();
+    delete data.deletedBookingIds[nb.id];
+    data.revivedBookingIds[nb.id] = reviveAt;
     if (existingAwbs.has(nb.awb)) nb.awb = (nb.awb || 'RESTORE') + '-R' + (i+1);
     data.bookings.push(nb);
     existingAwbs.add(nb.awb);
@@ -4543,5 +4564,5 @@ window.addEventListener('storage', e => {
 </script>
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a061d2ff5b18836e',t:'MTc4MDUyMjQ5MA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"1954b47c125f43f8b4338b3c4f804e4f","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a087b6271eb40c28',t:'MTc4MDkxOTc2OA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
