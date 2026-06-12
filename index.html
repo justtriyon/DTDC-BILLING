@@ -2429,6 +2429,13 @@ function mergeCloudData(localData, remoteData) {
   const deletedBookingSet = new Set(Object.keys(base.deletedBookingIds || {}));
   const deletedBillSet = new Set(Object.keys(base.deletedBillNos || {}));
   const deletedPaymentSet = new Set(Object.keys(base.deletedPaymentIds || {}));
+  // If a bill is deleted, all bookings linked with that bill must become unbilled.
+  base.bookings.forEach(b => {
+    if (b.billNo && deletedBillSet.has(b.billNo)) { b.billNo = ''; changed = true; }
+  });
+  other.bookings.forEach(b => {
+    if (b.billNo && deletedBillSet.has(b.billNo)) b.billNo = '';
+  });
   const beforeDeleteFilter = base.bookings.length + base.companies.length + base.bills.length + base.payments.length;
   base.companies = base.companies.filter(c => !deletedCompanySet.has(c.code));
   base.bookings = base.bookings.filter(b => !deletedBookingSet.has(b.id) && !deletedCompanySet.has(b.companyCode));
@@ -2467,13 +2474,16 @@ function mergeCloudData(localData, remoteData) {
       if (b.id && bookingMapById.has(b.id)) {
         const idx = bookingMapById.get(b.id);
         const cur = base.bookings[idx];
+        if (b.billNo && deletedBillSet.has(b.billNo)) b.billNo = '';
         if ((!cur.billNo && b.billNo) || (remoteUpdated > localUpdated && JSON.stringify(cur) !== JSON.stringify(b))) {
           base.bookings[idx] = { ...cur, ...b };
+          if (base.bookings[idx].billNo && deletedBillSet.has(base.bookings[idx].billNo)) base.bookings[idx].billNo = '';
           changed = true;
         }
       }
       return;
     }
+    if (b.billNo && deletedBillSet.has(b.billNo)) b.billNo = '';
     base.bookings.push(b);
     if (b.id) bookingIds.add(b.id);
     if (awbKey) bookingAwbs.add(awbKey);
@@ -3893,6 +3903,8 @@ function deleteBill(billNo) {
   }
 
   save();
+  setTimeout(() => cloudPush(), 200);
+  if (document.getElementById('panel-billing')?.classList.contains('active')) loadBillingEntries(true);
   renderBillsHistory();
   renderBookings();
   renderDashboard();
